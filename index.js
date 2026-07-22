@@ -464,6 +464,31 @@ async function restoreConnectionProfile(profileState) {
 }
 
 /**
+ * 대필용 연결 프로필로 잠깐 전환한 뒤 작업을 실행하고,
+ * 작업이 끝나면 원래 연결 프로필로 복귀합니다.
+ *
+ * 이 helper를 쓰는 작업:
+ * - 현재 입력창 대필
+ * - 히스토리 항목 재대필
+ * - 영어 히스토리 항목 한국어 번역
+ */
+async function runWithGhostwriterProfile(task) {
+  let profileState = null;
+
+  try {
+    profileState = await switchToGhostwriterProfile();
+    return await task();
+  } finally {
+    try {
+      await restoreConnectionProfile(profileState);
+    } catch (error) {
+      console.error(`[${EXTENSION_NAME}] profile restore failed`, error);
+      toastr?.warning?.('원래 연결 프로필로 복귀하지 못했어요.');
+    }
+  }
+}
+
+/**
  * 프리셋 객체를 <option> HTML로 바꿉니다.
  *
  * 설정 UI의 톤/언어/길이 드롭다운이 모두 같은 구조라서 공통 함수로 만들었습니다.
@@ -777,6 +802,49 @@ function buildRewritePrompt(originalText) {
 }
 
 /**
+ * 히스토리 결과가 영어인지 가볍게 판별합니다.
+ *
+ * 목적:
+ * - 영어로 출력된 항목에만 "한국어 번역" 버튼을 보여주기
+ *
+ * 아주 정교한 언어 판별기는 아니지만,
+ * 라틴 알파벳이 있고 한글이 없으면 영어 출력으로 간주합니다.
+ */
+function isLikelyEnglishText(text) {
+  const value = String(text || '');
+  const hasLatin = /[A-Za-z]/.test(value);
+  const hasHangul = /[가-힣]/.test(value);
+  return hasLatin && !hasHangul;
+}
+
+/**
+ * 히스토리의 영어 대필 결과를 한국어로 번역할 때 쓰는 system prompt입니다.
+ *
+ * 번역은 새 대필이 아니라 의미 보존 작업이므로,
+ * 새 사건/대사/정보를 만들지 않도록 제한합니다.
+ */
+function buildTranslateToKoreanSystemPrompt() {
+  return [
+    'You are Ghostwriter, a translation tool for roleplay prose.',
+    'Translate only the text inside <TEXT> into natural Korean.',
+    'Preserve meaning, tone, tense, emotion, and roleplay nuance.',
+    'Do not add new events, dialogue, thoughts, facts, or explanations.',
+    'Return only the Korean translation.'
+  ].join('\n');
+}
+
+/**
+ * 히스토리의 영어 대필 결과를 한국어로 번역할 때 쓰는 user prompt입니다.
+ */
+function buildTranslateToKoreanPrompt(text) {
+  return [
+    '<TEXT>',
+    text,
+    '</TEXT>'
+  ].join('\n');
+}
+
+/**
  * 입력창 바로 위에 들어갈 히스토리 패널을 만듭니다.
  *
  * 큰 팝업 대신 입력창이 위로 살짝 확장된 것처럼 보이게 하려면,
@@ -852,6 +920,9 @@ function renderHistoryPanel() {
     row.className = 'ghostwriter-history-item';
     row.dataset.ghostwriterHistoryId = item.id;
 
+    const header = document.createElement('div');
+    header.className = 'ghostwriter-history-item-header';
+
     const time = document.createElement('div');
     time.className = 'ghostwriter-history-time';
     time.textContent = formatHistoryTime(item.createdAt);
@@ -871,9 +942,147 @@ function renderHistoryPanel() {
     toggle.setAttribute('aria-label', '대필 결과 전체보기');
     toggle.setAttribute('aria-expanded', 'false');
 
-    row.append(time, rewritten, toggle);
+    const detail = document.createElement('div');
+    detail.className = 'ghostwriter-history-detail';
+
+    const detailText = document.createElement('div');
+    detailText.className = 'ghostwriter-history-detail-text';
+    detailText.textContent = item.rewritten;
+
+    const actions = document.createElement('div');
+    actions.className = 'ghostwriter-history-actions';
+
+    if (isLikelyEnglishText(item.rewritten)) {
+      const translateButton = document.createElement('button');
+      translateButton.type = 'button';
+      translateButton.className = 'menu_button ghostwriter-history-action';
+      translateButton.dataset.ghostwriterHistoryTranslate = item.id;
+      translateButton.innerHTML = '<i class="fa-solid fa-language" aria-hidden="true"></i><span>한국어</span>';
+      translateButton.title = '이 영어 대필 결과를 한국어로 번역합니다.';
+      actions.appendChild(translateButton);
+    }
+
+    const rewriteButton = document.createElement('button');
+    rewriteButton.type = 'button';
+    rewriteButton.className = 'menu_button ghostwriter-history-action';
+    rewriteButton.dataset.ghostwriterHistoryRewriteOriginal = item.id;
+    rewriteButton.innerHTML = '<i class="fa-solid fa-rotate" aria-hidden="true"></i><span>재대필</span>';
+    rewriteButton.title = '이 항목의 원문을 현재 설정으로 다시 대필합니다.';
+    actions.appendChild(rewriteButton);
+
+    detail.append(detailText, actions);
+    header.append(time, rewritten, toggle);
+    row.append(header, detail);
     list.appendChild(row);
   });
+}
+
+/**
+ * 고스트 버튼의 작업 중 상태를 켜고 끕니다.
+ *
+ * 현재 입력창 대필뿐 아니라 히스토리 번역/재대필도 같은 생성 API를 쓰므로,
+ * 모두 같은 버튼 애니메이션으로 진행 상태를 표시합니다.
+ */
+function setGhostButtonWorking(isWorking) {
+  const button = document.querySelector(`#${EXTENSION_NAME}-button`);
+
+  if (isWorking) {
+    button?.classList.add('ghostwriter-working');
+    button?.setAttribute('disabled', 'disabled');
+    setButtonIcon(button, true);
+    return;
+  }
+
+  button?.classList.remove('ghostwriter-working');
+  button?.removeAttribute('disabled');
+  setButtonIcon(button);
+}
+
+/**
+ * 히스토리 id로 저장된 항목을 찾습니다.
+ */
+function findHistoryItem(itemId) {
+  return loadHistory().find((historyItem) => historyItem.id === itemId);
+}
+
+/**
+ * 히스토리에 저장된 영어 대필 결과를 한국어로 번역합니다.
+ *
+ * 번역 결과는 입력창에 적용하고, 같은 원문을 가진 새 히스토리 항목으로 저장합니다.
+ */
+async function translateHistoryItem(itemId) {
+  const item = findHistoryItem(itemId);
+
+  if (!item) {
+    toastr?.warning?.('번역할 대필 기록을 찾지 못했어요.');
+    renderHistoryPanel();
+    return;
+  }
+
+  if (!isLikelyEnglishText(item.rewritten)) {
+    toastr?.warning?.('영어로 보이는 대필 결과에만 번역을 사용할 수 있어요.');
+    return;
+  }
+
+  const context = getSillyTavernContext();
+
+  if (!context?.generateRaw) {
+    toastr?.error?.('SillyTavern 생성 API를 찾지 못했어요.');
+    return;
+  }
+
+  const translatedText = await runWithGhostwriterProfile(() => context.generateRaw({
+    systemPrompt: buildTranslateToKoreanSystemPrompt(),
+    prompt: buildTranslateToKoreanPrompt(item.rewritten)
+  }));
+
+  if (typeof translatedText !== 'string' || !translatedText.trim()) {
+    toastr?.warning?.('번역 결과가 비어 있어요.');
+    return;
+  }
+
+  const cleanedText = translatedText.trim();
+  setInputTextareaValue(cleanedText);
+  addHistoryItem(item.original, cleanedText);
+  toastr?.success?.('한국어 번역을 입력창에 적용했어요.');
+}
+
+/**
+ * 히스토리에 저장된 원문을 현재 설정으로 다시 대필합니다.
+ *
+ * 현재 입력창 내용은 사용하지 않습니다.
+ * 저장된 item.original을 기준으로 다시 생성합니다.
+ */
+async function rewriteHistoryOriginal(itemId) {
+  const item = findHistoryItem(itemId);
+
+  if (!item) {
+    toastr?.warning?.('재대필할 원문 기록을 찾지 못했어요.');
+    renderHistoryPanel();
+    return;
+  }
+
+  const context = getSillyTavernContext();
+
+  if (!context?.generateRaw) {
+    toastr?.error?.('SillyTavern 생성 API를 찾지 못했어요.');
+    return;
+  }
+
+  const rewrittenText = await runWithGhostwriterProfile(() => context.generateRaw({
+    systemPrompt: buildSystemPrompt(),
+    prompt: buildRewritePrompt(item.original)
+  }));
+
+  if (typeof rewrittenText !== 'string' || !rewrittenText.trim()) {
+    toastr?.warning?.('재대필 결과가 비어 있어요.');
+    return;
+  }
+
+  const cleanedText = rewrittenText.trim();
+  setInputTextareaValue(cleanedText);
+  addHistoryItem(item.original, cleanedText);
+  toastr?.success?.('저장된 원문을 다시 대필했어요.');
 }
 
 /**
@@ -884,10 +1093,12 @@ function renderHistoryPanel() {
  * - 토글 아이콘: 한 줄로 줄인 대필 결과를 전체 문장으로 펼치거나 접습니다.
  * - 대필 기록 클릭: 해당 결과를 입력창에 다시 적용합니다.
  */
-function handleHistoryPanelClick(event) {
+async function handleHistoryPanelClick(event) {
   const closeButton = event.target.closest('[data-ghostwriter-history-close]');
   const toggleButton = event.target.closest('[data-ghostwriter-history-toggle]');
   const applyButton = event.target.closest('[data-ghostwriter-history-apply]');
+  const translateButton = event.target.closest('[data-ghostwriter-history-translate]');
+  const rewriteOriginalButton = event.target.closest('[data-ghostwriter-history-rewrite-original]');
 
   if (closeButton) {
     isHistoryPanelClosed = true;
@@ -907,6 +1118,36 @@ function handleHistoryPanelClick(event) {
     toggleButton.setAttribute('aria-label', isExpanded ? '대필 결과 접기' : '대필 결과 전체보기');
     toggleButton.setAttribute('aria-expanded', String(Boolean(isExpanded)));
     rewritten?.focus();
+    return;
+  }
+
+  if (translateButton || rewriteOriginalButton) {
+    if (isGenerating) {
+      return;
+    }
+
+    try {
+      isGenerating = true;
+      setGhostButtonWorking(true);
+
+      if (translateButton) {
+        await translateHistoryItem(translateButton.dataset.ghostwriterHistoryTranslate);
+      } else {
+        await rewriteHistoryOriginal(rewriteOriginalButton.dataset.ghostwriterHistoryRewriteOriginal);
+      }
+    } catch (error) {
+      console.error(`[${EXTENSION_NAME}] history action failed`, error);
+
+      if (error?.name === 'GhostwriterProfileError') {
+        toastr?.error?.(error.message);
+      } else {
+        toastr?.error?.('히스토리 작업 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
+      }
+    } finally {
+      isGenerating = false;
+      setGhostButtonWorking(false);
+    }
+
     return;
   }
 
@@ -947,8 +1188,8 @@ function watchChatKeyChanges() {
 /**
  * 입력창의 원문을 읽고, SillyTavern의 현재 연결 API로 대필을 요청합니다.
  *
- * 현재 버전은 별도 연결 프로필을 전환하지 않습니다.
- * 즉, SillyTavern에서 지금 선택되어 있는 API/모델/프리셋을 그대로 사용합니다.
+ * 설정에서 대필용 연결 프로필을 골랐다면,
+ * 생성 직전에 해당 프로필로 전환하고 완료 후 원래 프로필로 복귀합니다.
  */
 async function rewriteCurrentInput() {
   if (isGenerating) {
@@ -971,7 +1212,6 @@ async function rewriteCurrentInput() {
   }
 
   const button = document.querySelector(`#${EXTENSION_NAME}-button`);
-  let profileState = null;
 
   try {
     isGenerating = true;
@@ -979,12 +1219,10 @@ async function rewriteCurrentInput() {
     button?.setAttribute('disabled', 'disabled');
     setButtonIcon(button, true);
 
-    profileState = await switchToGhostwriterProfile();
-
-    const rewrittenText = await context.generateRaw({
+    const rewrittenText = await runWithGhostwriterProfile(() => context.generateRaw({
       systemPrompt: buildSystemPrompt(),
       prompt: buildRewritePrompt(originalText)
-    });
+    }));
 
     if (typeof rewrittenText !== 'string' || !rewrittenText.trim()) {
       toastr?.warning?.('대필 결과가 비어 있어요.');
@@ -1004,13 +1242,6 @@ async function rewriteCurrentInput() {
       toastr?.error?.('대필 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
     }
   } finally {
-    try {
-      await restoreConnectionProfile(profileState);
-    } catch (error) {
-      console.error(`[${EXTENSION_NAME}] profile restore failed`, error);
-      toastr?.warning?.('원래 연결 프로필로 복귀하지 못했어요.');
-    }
-
     isGenerating = false;
     button?.classList.remove('ghostwriter-working');
     button?.removeAttribute('disabled');

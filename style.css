@@ -175,9 +175,9 @@
   height: 26px;
   min-height: 26px;
   padding: 0;
-  border: 1px solid var(--SmartThemeBorderColor, rgba(0, 0, 0, 0.14));
+  border: 0;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.92);
+  background: transparent;
   color: var(--SmartThemeBodyColor, #222);
   display: inline-flex;
   align-items: center;
@@ -186,8 +186,8 @@
 }
 
 .ghostwriter-history-close:hover {
-  border-color: var(--SmartThemeQuoteColor, rgba(0, 0, 0, 0.28));
-  background: rgba(255, 255, 255, 1);
+  background: transparent;
+  color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
 }
 
 .ghostwriter-history-list {
@@ -205,11 +205,14 @@
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.88);
   color: var(--SmartThemeBodyColor, #222);
+  text-align: left;
+}
+
+.ghostwriter-history-item-header {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr) 28px;
   align-items: center;
   gap: 8px;
-  text-align: left;
 }
 
 .ghostwriter-history-item:hover {
@@ -267,14 +270,44 @@
   color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
 }
 
-.ghostwriter-history-item-expanded {
-  align-items: start;
+.ghostwriter-history-detail {
+  display: none;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--SmartThemeBorderColor, rgba(0, 0, 0, 0.1));
 }
 
-.ghostwriter-history-item-expanded .ghostwriter-history-rewritten {
+.ghostwriter-history-item-expanded .ghostwriter-history-detail {
+  display: block;
+}
+
+.ghostwriter-history-detail-text {
+  color: var(--SmartThemeBodyColor, #222);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
   white-space: pre-wrap;
-  overflow: visible;
-  text-overflow: initial;
+  letter-spacing: 0;
+}
+
+.ghostwriter-history-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.ghostwriter-history-action {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 @media (max-width: 520px) {
@@ -285,6 +318,10 @@
   }
 
   .ghostwriter-history-item {
+    gap: 6px;
+  }
+
+  .ghostwriter-history-item-header {
     grid-template-columns: 48px minmax(0, 1fr) 26px;
     gap: 6px;
   }
@@ -300,5 +337,14 @@
     min-height: 26px;
     padding: 0;
     font-size: 11px;
+  }
+
+  .ghostwriter-history-actions {
+    justify-content: stretch;
+  }
+
+  .ghostwriter-history-action {
+    flex: 1 1 auto;
+    justify-content: center;
   }
 }
