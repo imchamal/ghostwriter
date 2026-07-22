@@ -67,6 +67,10 @@ const MAX_HISTORY_ITEMS = 5;
 // 유저가 다른 채팅으로 이동했는지 감지할 때 사용합니다.
 let lastRenderedChatKey = '';
 
+// 사용자가 직접 닫은 패널인지 기억합니다.
+// 대필 기록이 있어도 닫기 버튼을 누르면 숨기고, 새 대필이 생성되면 다시 열립니다.
+let isHistoryPanelClosed = false;
+
 /**
  * 버튼 안의 아이콘을 설정합니다.
  *
@@ -172,6 +176,15 @@ function getHistoryStorageKey() {
 }
 
 /**
+ * 히스토리 패널 닫힘 상태를 저장하는 키를 만듭니다.
+ *
+ * 기록은 채팅별로 나뉘므로, 패널을 닫았는지도 채팅별로 따로 기억합니다.
+ */
+function getHistoryClosedStorageKey() {
+  return `${EXTENSION_NAME}.historyClosed.${getCurrentChatKey()}`;
+}
+
+/**
  * 현재 채팅의 대필 기록을 불러옵니다.
  *
  * 저장 데이터가 깨졌거나 형식이 다르면 빈 배열로 처리합니다.
@@ -202,6 +215,20 @@ function saveHistory(history) {
 }
 
 /**
+ * 현재 채팅의 히스토리 패널 닫힘 상태를 불러옵니다.
+ */
+function loadHistoryPanelClosed() {
+  return localStorage.getItem(getHistoryClosedStorageKey()) === 'true';
+}
+
+/**
+ * 현재 채팅의 히스토리 패널 닫힘 상태를 저장합니다.
+ */
+function saveHistoryPanelClosed(isClosed) {
+  localStorage.setItem(getHistoryClosedStorageKey(), String(isClosed));
+}
+
+/**
  * 대필이 성공했을 때 새 기록을 추가합니다.
  *
  * id는 시간값과 랜덤 문자열을 섞어서 만듭니다.
@@ -217,22 +244,9 @@ function addHistoryItem(original, rewritten) {
   };
 
   saveHistory([item, ...history]);
+  isHistoryPanelClosed = false;
+  saveHistoryPanelClosed(false);
   renderHistoryPanel();
-}
-
-/**
- * 긴 문장을 히스토리 패널에서 보기 좋게 줄입니다.
- *
- * 실제 저장된 원문/결과는 그대로 두고, 화면에 보여줄 때만 짧게 표시합니다.
- */
-function shortenText(text, maxLength = 90) {
-  const normalizedText = String(text || '').replace(/\s+/g, ' ').trim();
-
-  if (normalizedText.length <= maxLength) {
-    return normalizedText;
-  }
-
-  return `${normalizedText.slice(0, maxLength)}...`;
 }
 
 /**
@@ -302,7 +316,12 @@ function insertHistoryPanel() {
         <i class="fa-solid fa-ghost" aria-hidden="true"></i>
         <span>ghostwriter</span>
       </div>
-      <div class="ghostwriter-history-count" data-ghostwriter-history-count>최근 대필 0개</div>
+      <div class="ghostwriter-history-tools">
+        <div class="ghostwriter-history-count" data-ghostwriter-history-count>최근 대필 0개</div>
+        <button type="button" class="ghostwriter-history-close" data-ghostwriter-history-close="true" aria-label="대필 기록 패널 닫기">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
     </div>
     <div class="ghostwriter-history-list" data-ghostwriter-history-list></div>
   `;
@@ -330,10 +349,11 @@ function renderHistoryPanel() {
 
   const history = loadHistory();
   lastRenderedChatKey = getCurrentChatKey();
+  isHistoryPanelClosed = loadHistoryPanelClosed();
   count.textContent = `최근 대필 ${history.length}개`;
   list.innerHTML = '';
 
-  if (!history.length) {
+  if (!history.length || isHistoryPanelClosed) {
     panel.classList.add('ghostwriter-history-hidden');
     return;
   }
@@ -341,45 +361,70 @@ function renderHistoryPanel() {
   panel.classList.remove('ghostwriter-history-hidden');
 
   history.forEach((item) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'ghostwriter-history-item';
-    button.dataset.ghostwriterHistoryId = item.id;
-    button.title = '이 대필 결과를 입력창에 다시 적용합니다.';
+    const row = document.createElement('div');
+    row.className = 'ghostwriter-history-item';
+    row.dataset.ghostwriterHistoryId = item.id;
 
     const time = document.createElement('div');
     time.className = 'ghostwriter-history-time';
     time.textContent = formatHistoryTime(item.createdAt);
 
-    const body = document.createElement('div');
-    body.className = 'ghostwriter-history-body';
-
-    const original = document.createElement('div');
-    original.className = 'ghostwriter-history-original';
-    original.textContent = shortenText(item.original, 72);
-
-    const rewritten = document.createElement('div');
+    const rewritten = document.createElement('button');
+    rewritten.type = 'button';
     rewritten.className = 'ghostwriter-history-rewritten';
-    rewritten.textContent = shortenText(item.rewritten, 110);
+    rewritten.dataset.ghostwriterHistoryApply = item.id;
+    rewritten.textContent = item.rewritten;
+    rewritten.title = '이 대필 결과를 입력창에 다시 적용합니다.';
 
-    body.append(original, rewritten);
-    button.append(time, body);
-    list.appendChild(button);
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'ghostwriter-history-toggle';
+    toggle.dataset.ghostwriterHistoryToggle = item.id;
+    toggle.textContent = '전체보기';
+    toggle.setAttribute('aria-expanded', 'false');
+
+    row.append(time, rewritten, toggle);
+    list.appendChild(row);
   });
 }
 
 /**
- * 히스토리 항목을 클릭했을 때 해당 대필 결과를 입력창에 다시 적용합니다.
+ * 히스토리 패널 안의 버튼을 처리합니다.
+ *
+ * 동작:
+ * - 닫기: 패널을 숨기고 현재 채팅에 닫힘 상태를 저장합니다.
+ * - 전체보기: 한 줄로 줄인 대필 결과를 전체 문장으로 펼치거나 접습니다.
+ * - 대필 기록 클릭: 해당 결과를 입력창에 다시 적용합니다.
  */
 function handleHistoryPanelClick(event) {
-  const itemButton = event.target.closest('[data-ghostwriter-history-id]');
+  const closeButton = event.target.closest('[data-ghostwriter-history-close]');
+  const toggleButton = event.target.closest('[data-ghostwriter-history-toggle]');
+  const applyButton = event.target.closest('[data-ghostwriter-history-apply]');
 
-  if (!itemButton) {
+  if (closeButton) {
+    isHistoryPanelClosed = true;
+    saveHistoryPanelClosed(true);
+    document.querySelector(`#${EXTENSION_NAME}-history`)?.classList.add('ghostwriter-history-hidden');
+    return;
+  }
+
+  if (toggleButton) {
+    const row = toggleButton.closest('[data-ghostwriter-history-id]');
+    const rewritten = row?.querySelector('[data-ghostwriter-history-apply]');
+    const isExpanded = row?.classList.toggle('ghostwriter-history-item-expanded');
+
+    toggleButton.textContent = isExpanded ? '접기' : '전체보기';
+    toggleButton.setAttribute('aria-expanded', String(Boolean(isExpanded)));
+    rewritten?.focus();
+    return;
+  }
+
+  if (!applyButton) {
     return;
   }
 
   const history = loadHistory();
-  const item = history.find((historyItem) => historyItem.id === itemButton.dataset.ghostwriterHistoryId);
+  const item = history.find((historyItem) => historyItem.id === applyButton.dataset.ghostwriterHistoryApply);
 
   if (!item) {
     toastr?.warning?.('선택한 대필 기록을 찾지 못했어요.');
@@ -402,6 +447,7 @@ function watchChatKeyChanges() {
     const currentChatKey = getCurrentChatKey();
 
     if (currentChatKey !== lastRenderedChatKey) {
+      isHistoryPanelClosed = loadHistoryPanelClosed();
       renderHistoryPanel();
     }
   }, 2000);
