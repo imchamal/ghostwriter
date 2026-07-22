@@ -1,0 +1,12 @@
+{
+  "display_name": "ghostwriter",
+  "loading_order": 20,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "yujeong-lim",
+  "version": "0.1.0",
+  "homePage": "https://github.com/yujeong-lim/ghostwriter",
+  "minimum_client_version": "1.12.6"
+}
