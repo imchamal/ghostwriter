@@ -873,6 +873,9 @@ function insertHistoryPanel() {
       </div>
       <div class="ghostwriter-history-tools">
         <div class="ghostwriter-history-count" data-ghostwriter-history-count>최근 대필 0개</div>
+        <button type="button" class="ghostwriter-history-reroll" data-ghostwriter-reroll-latest="true" aria-label="직전 입력 재대필" title="직전 입력을 현재 설정으로 다시 대필합니다.">
+          <i class="fa-solid fa-person-praying" aria-hidden="true"></i>
+        </button>
         <button type="button" class="ghostwriter-history-close" data-ghostwriter-history-close="true" aria-label="대필 기록 패널 닫기">
           <i class="fa-solid fa-xmark" aria-hidden="true"></i>
         </button>
@@ -934,6 +937,18 @@ function renderHistoryPanel() {
     rewritten.textContent = item.rewritten;
     rewritten.title = '이 대필 결과를 입력창에 다시 적용합니다.';
 
+    const translate = document.createElement('button');
+    translate.type = 'button';
+    translate.className = 'ghostwriter-history-translate';
+    translate.dataset.ghostwriterHistoryTranslate = item.id;
+    translate.innerHTML = '<i class="fa-solid fa-language" aria-hidden="true"></i>';
+    translate.title = '이 영어 대필 결과를 한국어로 번역해서 패널 안에서 봅니다.';
+    translate.setAttribute('aria-label', '한국어 번역 보기');
+
+    if (!isLikelyEnglishText(item.rewritten)) {
+      translate.hidden = true;
+    }
+
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'ghostwriter-history-toggle';
@@ -949,29 +964,12 @@ function renderHistoryPanel() {
     detailText.className = 'ghostwriter-history-detail-text';
     detailText.textContent = item.rewritten;
 
-    const actions = document.createElement('div');
-    actions.className = 'ghostwriter-history-actions';
+    const translationText = document.createElement('div');
+    translationText.className = 'ghostwriter-history-translation ghostwriter-history-translation-hidden';
+    translationText.dataset.ghostwriterHistoryTranslation = item.id;
 
-    if (isLikelyEnglishText(item.rewritten)) {
-      const translateButton = document.createElement('button');
-      translateButton.type = 'button';
-      translateButton.className = 'menu_button ghostwriter-history-action';
-      translateButton.dataset.ghostwriterHistoryTranslate = item.id;
-      translateButton.innerHTML = '<i class="fa-solid fa-language" aria-hidden="true"></i><span>한국어</span>';
-      translateButton.title = '이 영어 대필 결과를 한국어로 번역합니다.';
-      actions.appendChild(translateButton);
-    }
-
-    const rewriteButton = document.createElement('button');
-    rewriteButton.type = 'button';
-    rewriteButton.className = 'menu_button ghostwriter-history-action';
-    rewriteButton.dataset.ghostwriterHistoryRewriteOriginal = item.id;
-    rewriteButton.innerHTML = '<i class="fa-solid fa-rotate" aria-hidden="true"></i><span>재대필</span>';
-    rewriteButton.title = '이 항목의 원문을 현재 설정으로 다시 대필합니다.';
-    actions.appendChild(rewriteButton);
-
-    detail.append(detailText, actions);
-    header.append(time, rewritten, toggle);
+    detail.append(detailText, translationText);
+    header.append(time, rewritten, translate, toggle);
     row.append(header, detail);
     list.appendChild(row);
   });
@@ -1008,7 +1006,8 @@ function findHistoryItem(itemId) {
 /**
  * 히스토리에 저장된 영어 대필 결과를 한국어로 번역합니다.
  *
- * 번역 결과는 입력창에 적용하고, 같은 원문을 가진 새 히스토리 항목으로 저장합니다.
+ * 번역 결과는 입력창이나 히스토리에 적용하지 않습니다.
+ * 영어 항목의 의미를 확인하기 위한 보기용 텍스트로만 패널 안에 표시합니다.
  */
 async function translateHistoryItem(itemId) {
   const item = findHistoryItem(itemId);
@@ -1041,10 +1040,16 @@ async function translateHistoryItem(itemId) {
     return;
   }
 
-  const cleanedText = translatedText.trim();
-  setInputTextareaValue(cleanedText);
-  addHistoryItem(item.original, cleanedText);
-  toastr?.success?.('한국어 번역을 입력창에 적용했어요.');
+  const translationBox = document.querySelector(`[data-ghostwriter-history-translation="${itemId}"]`);
+
+  if (!translationBox) {
+    toastr?.warning?.('번역을 표시할 히스토리 항목을 찾지 못했어요.');
+    return;
+  }
+
+  translationBox.textContent = translatedText.trim();
+  translationBox.classList.remove('ghostwriter-history-translation-hidden');
+  toastr?.success?.('한국어 번역을 패널에 표시했어요.');
 }
 
 /**
@@ -1086,6 +1091,23 @@ async function rewriteHistoryOriginal(itemId) {
 }
 
 /**
+ * 가장 최근 히스토리에 저장된 원문을 현재 설정으로 다시 대필합니다.
+ *
+ * 사용자가 말한 "직전 인풋"은 가장 최근 대필을 만들 때 입력창에 있던 원문입니다.
+ * 히스토리에는 original로 저장되어 있으므로, 최신 항목의 original을 사용합니다.
+ */
+async function rewriteLatestOriginal() {
+  const latestItem = loadHistory()[0];
+
+  if (!latestItem?.original) {
+    toastr?.warning?.('재대필할 직전 입력이 없어요.');
+    return;
+  }
+
+  await rewriteHistoryOriginal(latestItem.id);
+}
+
+/**
  * 히스토리 패널 안의 버튼을 처리합니다.
  *
  * 동작:
@@ -1095,15 +1117,40 @@ async function rewriteHistoryOriginal(itemId) {
  */
 async function handleHistoryPanelClick(event) {
   const closeButton = event.target.closest('[data-ghostwriter-history-close]');
+  const rerollLatestButton = event.target.closest('[data-ghostwriter-reroll-latest]');
   const toggleButton = event.target.closest('[data-ghostwriter-history-toggle]');
   const applyButton = event.target.closest('[data-ghostwriter-history-apply]');
   const translateButton = event.target.closest('[data-ghostwriter-history-translate]');
-  const rewriteOriginalButton = event.target.closest('[data-ghostwriter-history-rewrite-original]');
 
   if (closeButton) {
     isHistoryPanelClosed = true;
     saveHistoryPanelClosed(true);
     document.querySelector(`#${EXTENSION_NAME}-history`)?.classList.add('ghostwriter-history-hidden');
+    return;
+  }
+
+  if (rerollLatestButton) {
+    if (isGenerating) {
+      return;
+    }
+
+    try {
+      isGenerating = true;
+      setGhostButtonWorking(true);
+      await rewriteLatestOriginal();
+    } catch (error) {
+      console.error(`[${EXTENSION_NAME}] latest rewrite failed`, error);
+
+      if (error?.name === 'GhostwriterProfileError') {
+        toastr?.error?.(error.message);
+      } else {
+        toastr?.error?.('직전 입력 재대필 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
+      }
+    } finally {
+      isGenerating = false;
+      setGhostButtonWorking(false);
+    }
+
     return;
   }
 
@@ -1121,7 +1168,7 @@ async function handleHistoryPanelClick(event) {
     return;
   }
 
-  if (translateButton || rewriteOriginalButton) {
+  if (translateButton) {
     if (isGenerating) {
       return;
     }
@@ -1129,12 +1176,7 @@ async function handleHistoryPanelClick(event) {
     try {
       isGenerating = true;
       setGhostButtonWorking(true);
-
-      if (translateButton) {
-        await translateHistoryItem(translateButton.dataset.ghostwriterHistoryTranslate);
-      } else {
-        await rewriteHistoryOriginal(rewriteOriginalButton.dataset.ghostwriterHistoryRewriteOriginal);
-      }
+      await translateHistoryItem(translateButton.dataset.ghostwriterHistoryTranslate);
     } catch (error) {
       console.error(`[${EXTENSION_NAME}] history action failed`, error);
 
