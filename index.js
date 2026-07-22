@@ -475,6 +475,34 @@ function buildPresetOptions(presets) {
 }
 
 /**
+ * 대필 옵션만 기본값으로 되돌립니다.
+ *
+ * 유지하는 값:
+ * - profileName: 유저가 고른 대필용 API 연결 프로필
+ *
+ * 초기화하는 값:
+ * - tonePreset: 대필 톤
+ * - outputLanguage: 출력 언어
+ * - lengthPreset: 길이
+ * - contextPreset: 참고할 최신 메시지
+ */
+function resetRewriteOptions(selects) {
+  const settings = getSettings();
+  settings.tonePreset = DEFAULT_SETTINGS.tonePreset;
+  settings.outputLanguage = DEFAULT_SETTINGS.outputLanguage;
+  settings.lengthPreset = DEFAULT_SETTINGS.lengthPreset;
+  settings.contextPreset = DEFAULT_SETTINGS.contextPreset;
+
+  selects.toneSelect.value = settings.tonePreset;
+  selects.languageSelect.value = settings.outputLanguage;
+  selects.lengthSelect.value = settings.lengthPreset;
+  selects.contextSelect.value = settings.contextPreset;
+
+  saveSettings();
+  toastr?.success?.('대필 옵션을 기본값으로 되돌렸어요.');
+}
+
+/**
  * 현재 채팅을 구분하기 위한 키를 만듭니다.
  *
  * SillyTavern 버전에 따라 context 안의 필드명이 다를 수 있어서,
@@ -839,7 +867,8 @@ function renderHistoryPanel() {
     toggle.type = 'button';
     toggle.className = 'ghostwriter-history-toggle';
     toggle.dataset.ghostwriterHistoryToggle = item.id;
-    toggle.textContent = '전체보기';
+    toggle.innerHTML = '<i class="fa-solid fa-angle-down" aria-hidden="true"></i>';
+    toggle.setAttribute('aria-label', '대필 결과 전체보기');
     toggle.setAttribute('aria-expanded', 'false');
 
     row.append(time, rewritten, toggle);
@@ -852,7 +881,7 @@ function renderHistoryPanel() {
  *
  * 동작:
  * - 닫기: 패널을 숨기고 현재 채팅에 닫힘 상태를 저장합니다.
- * - 전체보기: 한 줄로 줄인 대필 결과를 전체 문장으로 펼치거나 접습니다.
+ * - 토글 아이콘: 한 줄로 줄인 대필 결과를 전체 문장으로 펼치거나 접습니다.
  * - 대필 기록 클릭: 해당 결과를 입력창에 다시 적용합니다.
  */
 function handleHistoryPanelClick(event) {
@@ -872,7 +901,10 @@ function handleHistoryPanelClick(event) {
     const rewritten = row?.querySelector('[data-ghostwriter-history-apply]');
     const isExpanded = row?.classList.toggle('ghostwriter-history-item-expanded');
 
-    toggleButton.textContent = isExpanded ? '접기' : '전체보기';
+    toggleButton.innerHTML = isExpanded
+      ? '<i class="fa-solid fa-angle-up" aria-hidden="true"></i>'
+      : '<i class="fa-solid fa-angle-down" aria-hidden="true"></i>';
+    toggleButton.setAttribute('aria-label', isExpanded ? '대필 결과 접기' : '대필 결과 전체보기');
     toggleButton.setAttribute('aria-expanded', String(Boolean(isExpanded)));
     rewritten?.focus();
     return;
@@ -1074,7 +1106,7 @@ function insertSettingsPanel() {
           </div>
         </label>
         <div class="ghostwriter-settings-hint">
-          SillyTavern API 연결의 연결 프로필에 저장된 항목 중 하나를 선택해요. 비워두면 현재 연결을 그대로 사용해요.
+          대필할 때만 이 프로필로 전환하고, 완료 후 원래 프로필로 돌아가요.
         </div>
         <label class="ghostwriter-settings-field" for="${EXTENSION_NAME}-tone-preset">
           <span>대필 톤</span>
@@ -1101,7 +1133,16 @@ function insertSettingsPanel() {
           </select>
         </label>
         <div class="ghostwriter-settings-hint">
-          시제는 과거형으로 고정돼요. 최신 메시지는 장면과 분위기 참고용이며, 대필 대상은 입력창 원문뿐이에요.
+          대필은 과거형 3인칭으로 고정돼요. 최신 메시지는 장면 참고용이며, 다시 쓰는 대상은 입력창 원문뿐이에요.
+        </div>
+        <div class="ghostwriter-settings-actions">
+          <button
+            type="button"
+            class="menu_button ghostwriter-settings-reset"
+            data-ghostwriter-reset-options="true"
+          >
+            대필 옵션 기본값으로
+          </button>
         </div>
       </div>
     </div>
@@ -1115,6 +1156,7 @@ function insertSettingsPanel() {
   const languageSelect = panel.querySelector(`#${EXTENSION_NAME}-output-language`);
   const lengthSelect = panel.querySelector(`#${EXTENSION_NAME}-length-preset`);
   const contextSelect = panel.querySelector(`#${EXTENSION_NAME}-context-preset`);
+  const resetButton = panel.querySelector('[data-ghostwriter-reset-options]');
 
   profileSelect.addEventListener('change', () => {
     getSettings().profileName = profileSelect.value;
@@ -1143,6 +1185,15 @@ function insertSettingsPanel() {
   contextSelect.addEventListener('change', () => {
     getSettings().contextPreset = contextSelect.value;
     saveSettings();
+  });
+
+  resetButton.addEventListener('click', () => {
+    resetRewriteOptions({
+      toneSelect,
+      languageSelect,
+      lengthSelect,
+      contextSelect
+    });
   });
 
   refreshButton.addEventListener('click', () => {

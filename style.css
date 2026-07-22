@@ -8,39 +8,38 @@
  */
 
 .ghostwriter-button {
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
-  min-height: 34px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
   padding: 0;
-  border-radius: 50%;
-  border: 1px solid var(--SmartThemeBorderColor, rgba(0, 0, 0, 0.14));
-  background: rgba(255, 255, 255, 0.92);
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
   color: var(--SmartThemeBodyColor, #222);
   font-size: 17px;
   font-weight: 500;
   letter-spacing: 0;
   line-height: 1;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  box-shadow: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    box-shadow 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease,
     transform 120ms ease;
 }
 
 .ghostwriter-button:hover {
-  background: rgba(255, 255, 255, 1);
-  border-color: var(--SmartThemeQuoteColor, rgba(0, 0, 0, 0.28));
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  background: transparent !important;
+  box-shadow: none;
+  color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
 }
 
 .ghostwriter-button:active {
   transform: translateY(1px);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  box-shadow: none;
 }
 
 .ghostwriter-button:disabled,
@@ -102,11 +101,26 @@
   color: var(--SmartThemeEmColor, inherit);
 }
 
+.ghostwriter-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.ghostwriter-settings-reset {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
 .ghostwriter-history {
   margin: 0 0 8px;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--SmartThemeBorderColor, rgba(0, 0, 0, 0.14));
-  border-radius: 12px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
   color: var(--SmartThemeBodyColor, #222);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
@@ -121,7 +135,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .ghostwriter-history-title {
@@ -174,21 +188,21 @@
 
 .ghostwriter-history-list {
   display: grid;
-  gap: 6px;
-  max-height: 230px;
+  gap: 5px;
+  max-height: 205px;
   overflow: auto;
 }
 
 .ghostwriter-history-item {
   width: 100%;
-  min-height: 42px;
-  padding: 8px 10px;
+  min-height: 36px;
+  padding: 6px 8px;
   border: 1px solid var(--SmartThemeBorderColor, rgba(0, 0, 0, 0.12));
-  border-radius: 10px;
+  border-radius: 9px;
   background: rgba(255, 255, 255, 0.88);
   color: var(--SmartThemeBodyColor, #222);
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) 70px;
+  grid-template-columns: 58px minmax(0, 1fr) 28px;
   align-items: center;
   gap: 8px;
   text-align: left;
@@ -228,13 +242,16 @@
 }
 
 .ghostwriter-history-toggle {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
   min-height: 28px;
-  padding: 4px 8px;
-  border: 1px solid var(--SmartThemeBorderColor, rgba(0, 0, 0, 0.14));
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
   color: var(--SmartThemeBodyColor, #222);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0;
   cursor: pointer;
@@ -242,8 +259,8 @@
 }
 
 .ghostwriter-history-toggle:hover {
-  border-color: var(--SmartThemeQuoteColor, rgba(0, 0, 0, 0.28));
-  background: rgba(255, 255, 255, 1);
+  background: transparent;
+  color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
 }
 
 .ghostwriter-history-item-expanded {
@@ -259,12 +276,12 @@
 @media (max-width: 520px) {
   .ghostwriter-history {
     margin-bottom: 6px;
-    padding: 8px;
+    padding: 7px;
     border-radius: 10px;
   }
 
   .ghostwriter-history-item {
-    grid-template-columns: 48px minmax(0, 1fr) 62px;
+    grid-template-columns: 48px minmax(0, 1fr) 26px;
     gap: 6px;
   }
 
@@ -273,7 +290,11 @@
   }
 
   .ghostwriter-history-toggle {
-    padding: 4px 6px;
+    width: 26px;
+    min-width: 26px;
+    height: 26px;
+    min-height: 26px;
+    padding: 0;
     font-size: 11px;
   }
 }
