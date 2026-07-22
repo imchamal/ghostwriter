@@ -255,6 +255,30 @@ async function getCurrentConnectionProfileName() {
 }
 
 /**
+ * SillyTavern에 저장된 연결 프로필 이름 목록을 가져옵니다.
+ *
+ * Connection Profiles 공식 slash command:
+ * - /profile-list   저장된 프로필 이름 배열을 JSON 문자열로 반환
+ */
+async function getConnectionProfileNames() {
+  const rawProfileList = await executeSlashCommand('/profile-list');
+
+  if (!rawProfileList) {
+    return [];
+  }
+
+  try {
+    const parsedProfileList = JSON.parse(rawProfileList);
+    return Array.isArray(parsedProfileList)
+      ? parsedProfileList.filter((profileName) => typeof profileName === 'string')
+      : [];
+  } catch (error) {
+    console.warn(`[${EXTENSION_NAME}] profile list parse failed`, error, rawProfileList);
+    return [];
+  }
+}
+
+/**
  * 지정한 연결 프로필로 전환합니다.
  */
 async function switchConnectionProfile(profileName) {
@@ -771,16 +795,27 @@ function insertSettingsPanel() {
       <div class="inline-drawer-content">
         <label class="ghostwriter-settings-field" for="${EXTENSION_NAME}-profile-name">
           <span>대필용 연결 프로필(API)</span>
-          <input
+          <div class="ghostwriter-settings-profile-row">
+            <select
             id="${EXTENSION_NAME}-profile-name"
             class="text_pole"
-            type="text"
-            placeholder="비워두면 현재 연결 사용"
-            value=""
-          />
+            disabled
+          >
+            <option value="">프로필 목록 불러오는 중...</option>
+          </select>
+            <button
+              type="button"
+              class="menu_button ghostwriter-settings-refresh"
+              data-ghostwriter-profile-refresh="true"
+              title="연결 프로필 목록 새로고침"
+              aria-label="연결 프로필 목록 새로고침"
+            >
+              <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+            </button>
+          </div>
         </label>
         <div class="ghostwriter-settings-hint">
-          입력한 프로필 이름으로 전환해 대필한 뒤, 원래 연결 프로필로 복귀해요. 저장 개수는 최신 3개로 고정돼요.
+          SillyTavern API 연결의 연결 프로필에 저장된 항목 중 하나를 선택해요. 비워두면 현재 연결을 그대로 사용해요.
         </div>
       </div>
     </div>
@@ -788,12 +823,71 @@ function insertSettingsPanel() {
 
   settingsRoot.appendChild(panel);
 
-  const profileInput = panel.querySelector(`#${EXTENSION_NAME}-profile-name`);
-  profileInput.value = settings.profileName || '';
-  profileInput.addEventListener('input', () => {
-    getSettings().profileName = profileInput.value.trim();
+  const profileSelect = panel.querySelector(`#${EXTENSION_NAME}-profile-name`);
+  const refreshButton = panel.querySelector('[data-ghostwriter-profile-refresh]');
+
+  profileSelect.addEventListener('change', () => {
+    getSettings().profileName = profileSelect.value;
     saveSettings();
   });
+
+  refreshButton.addEventListener('click', () => {
+    populateConnectionProfileSelect(panel);
+  });
+
+  populateConnectionProfileSelect(panel, settings.profileName || '');
+}
+
+/**
+ * 설정 드롭다운에 저장된 연결 프로필 목록을 채웁니다.
+ *
+ * 목록을 불러오지 못하면 선택 상자를 비활성화하고,
+ * 유저에게 Connection Profiles 확장이 켜져 있는지 확인하라는 안내를 띄웁니다.
+ */
+async function populateConnectionProfileSelect(panel, preferredProfileName = getSettings().profileName || '') {
+  const profileSelect = panel.querySelector(`#${EXTENSION_NAME}-profile-name`);
+  const refreshButton = panel.querySelector('[data-ghostwriter-profile-refresh]');
+
+  if (!profileSelect) {
+    return;
+  }
+
+  profileSelect.disabled = true;
+  refreshButton?.setAttribute('disabled', 'disabled');
+  profileSelect.innerHTML = '<option value="">프로필 목록 불러오는 중...</option>';
+
+  try {
+    const profileNames = await getConnectionProfileNames();
+    profileSelect.innerHTML = '';
+
+    const currentOption = document.createElement('option');
+    currentOption.value = '';
+    currentOption.textContent = '현재 연결 그대로 사용';
+    profileSelect.appendChild(currentOption);
+
+    profileNames.forEach((profileName) => {
+      const option = document.createElement('option');
+      option.value = profileName;
+      option.textContent = profileName;
+      profileSelect.appendChild(option);
+    });
+
+    if (preferredProfileName && !profileNames.includes(preferredProfileName)) {
+      const missingOption = document.createElement('option');
+      missingOption.value = preferredProfileName;
+      missingOption.textContent = `${preferredProfileName} (목록에 없음)`;
+      profileSelect.appendChild(missingOption);
+    }
+
+    profileSelect.value = preferredProfileName;
+    profileSelect.disabled = false;
+  } catch (error) {
+    console.error(`[${EXTENSION_NAME}] profile list load failed`, error);
+    profileSelect.innerHTML = '<option value="">프로필 목록을 불러오지 못했어요</option>';
+    toastr?.warning?.('연결 프로필 목록을 불러오지 못했어요. Connection Profiles가 활성화되어 있는지 확인해 주세요.');
+  } finally {
+    refreshButton?.removeAttribute('disabled');
+  }
 }
 
 /**
