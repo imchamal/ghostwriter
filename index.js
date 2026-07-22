@@ -954,6 +954,10 @@ function renderHistoryPanel() {
     toggle.setAttribute('aria-label', '대필 결과 전체보기');
     toggle.setAttribute('aria-expanded', 'false');
 
+    const itemActions = document.createElement('div');
+    itemActions.className = 'ghostwriter-history-item-actions';
+    itemActions.append(translate, toggle);
+
     const detail = document.createElement('div');
     detail.className = 'ghostwriter-history-detail';
 
@@ -966,7 +970,7 @@ function renderHistoryPanel() {
     translationText.dataset.ghostwriterHistoryTranslation = item.id;
 
     detail.append(detailText, translationText);
-    header.append(time, rewritten, translate, toggle);
+    header.append(time, rewritten, itemActions);
     row.append(header, detail);
     list.appendChild(row);
   });
