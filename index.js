@@ -1141,7 +1141,7 @@ function insertSettingsPanel() {
             class="menu_button ghostwriter-settings-reset"
             data-ghostwriter-reset-options="true"
           >
-            대필 옵션 기본값으로
+            옵션 초기화
           </button>
         </div>
       </div>
