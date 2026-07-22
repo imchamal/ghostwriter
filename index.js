@@ -25,12 +25,12 @@ const DEFAULT_SYSTEM_PROMPT = [
   'You are Ghostwriter, a rewriting tool for SillyTavern roleplay drafts.',
   '',
   'ROLE DEFINITIONS:',
-  '- {{user}} / <USER> = the human user persona. This is the ONLY acting subject you may rewrite.',
+  '- {{user}} / {{User}} / <USER> = the human user persona. This is the ONLY acting subject you may rewrite.',
   '- {{char}} / <BOT> = the assistant character, bot character, NPC, or current chat character. This is NEVER the acting subject of the rewrite.',
   '',
   'TASK:',
   '- Rewrite ONLY the text inside <USER_INPUT> as polished Korean third-person prose.',
-  '- The rewritten sentence must describe {{user}} / <USER> doing, feeling, thinking, or saying the original input.',
+  '- The rewritten sentence must describe {{user}} / {{User}} / <USER> doing, feeling, thinking, or saying the original input.',
   '- Treat the current chat character, {{char}}, <BOT>, and any assistant-side persona as the receiver or context only, never as the narrator or actor.',
   '',
   'PROFILE AND PRONOUN RULES:',
@@ -59,10 +59,13 @@ const DEFAULT_SYSTEM_PROMPT = [
 // 버튼을 빠르게 여러 번 눌러도 요청이 겹치지 않도록 합니다.
 let isGenerating = false;
 
-// 미리보기 창에서 사용할 원문과 대필 결과를 잠시 저장합니다.
-// 사용자가 "덮어쓰기" 또는 "아래에 추가"를 누를 때 이 값을 사용합니다.
-let latestPreviewOriginal = '';
-let latestPreviewRewritten = '';
+// 채팅별로 저장할 대필 기록 개수입니다.
+// 너무 많이 저장하면 브라우저 localStorage가 지저분해지므로, 테스트 버전에서는 5개만 보여주고 저장합니다.
+const MAX_HISTORY_ITEMS = 5;
+
+// 마지막으로 패널을 그린 채팅 키입니다.
+// 유저가 다른 채팅으로 이동했는지 감지할 때 사용합니다.
+let lastRenderedChatKey = '';
 
 /**
  * 버튼 안의 아이콘을 설정합니다.
@@ -131,43 +134,115 @@ function setInputTextareaValue(text) {
 }
 
 /**
- * 입력창의 기존 내용 아래에 대필 결과를 덧붙입니다.
+ * 현재 채팅을 구분하기 위한 키를 만듭니다.
  *
- * 원문을 보존한 채 비교하거나, 결과를 일부만 가져다 쓰고 싶을 때 유용합니다.
+ * SillyTavern 버전에 따라 context 안의 필드명이 다를 수 있어서,
+ * 여러 후보를 순서대로 확인합니다.
+ *
+ * 우선순위:
+ * 1. 그룹 채팅이면 groupId를 사용합니다.
+ * 2. 일반 캐릭터 채팅이면 캐릭터 id와 채팅 id를 조합합니다.
+ * 3. 그래도 찾지 못하면 global 키를 사용합니다.
  */
-function appendInputTextareaValue(text) {
-  const textarea = getInputTextarea();
+function getCurrentChatKey() {
+  const context = getSillyTavernContext();
 
-  if (!textarea) {
-    toastr?.error?.('입력창을 찾지 못했어요.');
-    return;
+  const groupId = context?.groupId || context?.selected_group;
+  if (groupId) {
+    return `group:${groupId}`;
   }
 
-  const currentText = textarea.value.trimEnd();
-  const nextText = currentText ? `${currentText}\n\n${text}` : text;
-  setInputTextareaValue(nextText);
+  const characterId = context?.characterId ?? context?.this_chid ?? context?.chid;
+  const chatId = context?.chatId || context?.chat_id || context?.chat?.id || context?.chat?.name;
+
+  if (characterId !== undefined && characterId !== null) {
+    return `character:${characterId}:chat:${chatId || 'current'}`;
+  }
+
+  return 'global';
 }
 
 /**
- * 대필 결과를 클립보드에 복사합니다.
+ * localStorage에 사용할 실제 저장 키를 만듭니다.
  *
- * 브라우저 보안 정책 때문에 clipboard API가 막힐 수 있어,
- * 실패하면 임시 textarea를 사용하는 예비 방식을 시도합니다.
+ * 채팅 키 앞에 확장 이름을 붙여 다른 확장/사이트 데이터와 충돌하지 않게 합니다.
  */
-async function copyTextToClipboard(text) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
+function getHistoryStorageKey() {
+  return `${EXTENSION_NAME}.history.${getCurrentChatKey()}`;
+}
+
+/**
+ * 현재 채팅의 대필 기록을 불러옵니다.
+ *
+ * 저장 데이터가 깨졌거나 형식이 다르면 빈 배열로 처리합니다.
+ */
+function loadHistory() {
+  try {
+    const rawHistory = localStorage.getItem(getHistoryStorageKey());
+    const parsedHistory = rawHistory ? JSON.parse(rawHistory) : [];
+    return Array.isArray(parsedHistory) ? parsedHistory : [];
+  } catch (error) {
+    console.warn(`[${EXTENSION_NAME}] history load failed`, error);
+    return [];
+  }
+}
+
+/**
+ * 현재 채팅의 대필 기록을 저장합니다.
+ *
+ * 최신 기록만 남기기 위해 MAX_HISTORY_ITEMS 개수로 잘라 저장합니다.
+ */
+function saveHistory(history) {
+  try {
+    const trimmedHistory = history.slice(0, MAX_HISTORY_ITEMS);
+    localStorage.setItem(getHistoryStorageKey(), JSON.stringify(trimmedHistory));
+  } catch (error) {
+    console.warn(`[${EXTENSION_NAME}] history save failed`, error);
+  }
+}
+
+/**
+ * 대필이 성공했을 때 새 기록을 추가합니다.
+ *
+ * id는 시간값과 랜덤 문자열을 섞어서 만듭니다.
+ * 나중에 특정 항목을 클릭했을 때 어떤 기록인지 찾는 데 사용합니다.
+ */
+function addHistoryItem(original, rewritten) {
+  const history = loadHistory();
+  const item = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: Date.now(),
+    original,
+    rewritten
+  };
+
+  saveHistory([item, ...history]);
+  renderHistoryPanel();
+}
+
+/**
+ * 긴 문장을 히스토리 패널에서 보기 좋게 줄입니다.
+ *
+ * 실제 저장된 원문/결과는 그대로 두고, 화면에 보여줄 때만 짧게 표시합니다.
+ */
+function shortenText(text, maxLength = 90) {
+  const normalizedText = String(text || '').replace(/\s+/g, ' ').trim();
+
+  if (normalizedText.length <= maxLength) {
+    return normalizedText;
   }
 
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  textarea.remove();
+  return `${normalizedText.slice(0, maxLength)}...`;
+}
+
+/**
+ * 타임스탬프를 사람이 보기 쉬운 짧은 시간으로 바꿉니다.
+ */
+function formatHistoryTime(timestamp) {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 /**
@@ -181,14 +256,14 @@ function buildRewritePrompt(originalText) {
     'Rewrite the following SillyTavern draft.',
     '',
     '<ROLE_MAP>',
-    '{{user}} = <USER> = the human user persona who wrote the draft.',
+    '{{user}} = {{User}} = <USER> = the human user persona who wrote the draft.',
     '{{char}} = <BOT> = the current chat character / assistant character. Do not make this character perform the draft.',
     '</ROLE_MAP>',
     '',
     '<PRONOUN_RULE>',
-    'Use {{user}} profile gender for the third-person Korean reference when it is explicit.',
+    'Use {{user}} / {{User}} profile gender for the third-person Korean reference when it is explicit.',
     'Use {{char}} profile only when referring to {{char}} as the receiver, never as the actor.',
-    'If {{user}} gender is unclear, do not guess; use neutral Korean phrasing or a natural omitted subject.',
+    'If {{user}} / {{User}} gender is unclear, do not guess; use neutral Korean phrasing or a natural omitted subject.',
     '</PRONOUN_RULE>',
     '',
     '<USER_INPUT>',
@@ -196,138 +271,140 @@ function buildRewritePrompt(originalText) {
     '</USER_INPUT>',
     '',
     'Output requirement:',
-    'Write only the rewritten Korean third-person prose where {{user}} / <USER> is the actor.'
+    'Write only the rewritten Korean third-person prose where {{user}} / {{User}} / <USER> is the actor.'
   ].join('\n');
 }
 
 /**
- * 미리보기 창 DOM을 한 번만 만듭니다.
+ * 입력창 바로 위에 들어갈 히스토리 패널을 만듭니다.
  *
- * 창 안의 버튼:
- * - 덮어쓰기: 입력창 원문을 대필 결과로 교체합니다.
- * - 아래에 추가: 입력창 원문 아래에 대필 결과를 붙입니다.
- * - 복사: 입력창은 그대로 두고 결과만 클립보드에 복사합니다.
- * - 닫기: 아무것도 적용하지 않고 창만 닫습니다.
+ * 큰 팝업 대신 입력창이 위로 살짝 확장된 것처럼 보이게 하려면,
+ * #send_form의 바로 앞에 패널을 끼워 넣는 방식이 가장 단순합니다.
  */
-function ensurePreviewModal() {
-  let modal = document.querySelector(`#${EXTENSION_NAME}-preview`);
-
-  if (modal) {
-    return modal;
+function insertHistoryPanel() {
+  if (document.querySelector(`#${EXTENSION_NAME}-history`)) {
+    return;
   }
 
-  modal = document.createElement('div');
-  modal.id = `${EXTENSION_NAME}-preview`;
-  modal.className = 'ghostwriter-preview ghostwriter-preview-hidden';
-  modal.innerHTML = `
-    <div class="ghostwriter-preview-backdrop" data-ghostwriter-close="true"></div>
-    <div class="ghostwriter-preview-card" role="dialog" aria-modal="true" aria-labelledby="ghostwriter-preview-title">
-      <div class="ghostwriter-preview-header">
-        <div id="ghostwriter-preview-title" class="ghostwriter-preview-title">ghostwriter 미리보기</div>
-        <button type="button" class="ghostwriter-preview-icon-button" data-ghostwriter-close="true" aria-label="미리보기 닫기">
-          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
-        </button>
+  const sendForm = document.querySelector('#send_form');
+
+  if (!sendForm?.parentElement) {
+    console.warn(`[${EXTENSION_NAME}] #send_form parent not found`);
+    return;
+  }
+
+  const panel = document.createElement('div');
+  panel.id = `${EXTENSION_NAME}-history`;
+  panel.className = 'ghostwriter-history ghostwriter-history-hidden';
+  panel.innerHTML = `
+    <div class="ghostwriter-history-header">
+      <div class="ghostwriter-history-title">
+        <i class="fa-solid fa-ghost" aria-hidden="true"></i>
+        <span>ghostwriter</span>
       </div>
-      <div class="ghostwriter-preview-section">
-        <div class="ghostwriter-preview-label">원문</div>
-        <div class="ghostwriter-preview-text" data-ghostwriter-original></div>
-      </div>
-      <div class="ghostwriter-preview-section">
-        <div class="ghostwriter-preview-label">대필 결과</div>
-        <textarea class="ghostwriter-preview-result" data-ghostwriter-result></textarea>
-      </div>
-      <div class="ghostwriter-preview-actions">
-        <button type="button" class="menu_button ghostwriter-preview-action" data-ghostwriter-action="replace">덮어쓰기</button>
-        <button type="button" class="menu_button ghostwriter-preview-action" data-ghostwriter-action="append">아래에 추가</button>
-        <button type="button" class="menu_button ghostwriter-preview-action" data-ghostwriter-action="copy">복사</button>
-        <button type="button" class="menu_button ghostwriter-preview-action ghostwriter-preview-secondary" data-ghostwriter-close="true">닫기</button>
-      </div>
+      <div class="ghostwriter-history-count" data-ghostwriter-history-count>최근 대필 0개</div>
     </div>
+    <div class="ghostwriter-history-list" data-ghostwriter-history-list></div>
   `;
 
-  modal.addEventListener('click', handlePreviewClick);
-  document.body.appendChild(modal);
-  return modal;
+  panel.addEventListener('click', handleHistoryPanelClick);
+  sendForm.parentElement.insertBefore(panel, sendForm);
 }
 
 /**
- * 미리보기 창에서 버튼을 눌렀을 때 실행되는 함수입니다.
- */
-async function handlePreviewClick(event) {
-  const closeTarget = event.target.closest('[data-ghostwriter-close]');
-  const actionTarget = event.target.closest('[data-ghostwriter-action]');
-
-  if (closeTarget) {
-    closePreviewModal();
-    return;
-  }
-
-  if (!actionTarget) {
-    return;
-  }
-
-  const modal = ensurePreviewModal();
-  const resultTextarea = modal.querySelector('[data-ghostwriter-result]');
-  const editedResult = resultTextarea?.value?.trim();
-
-  if (!editedResult) {
-    toastr?.warning?.('적용할 대필 결과가 비어 있어요.');
-    return;
-  }
-
-  const action = actionTarget.dataset.ghostwriterAction;
-
-  if (action === 'replace') {
-    setInputTextareaValue(editedResult);
-    closePreviewModal();
-    toastr?.success?.('대필 결과로 입력창을 덮어썼어요.');
-    return;
-  }
-
-  if (action === 'append') {
-    appendInputTextareaValue(editedResult);
-    closePreviewModal();
-    toastr?.success?.('대필 결과를 입력창 아래에 추가했어요.');
-    return;
-  }
-
-  if (action === 'copy') {
-    try {
-      await copyTextToClipboard(editedResult);
-      toastr?.success?.('대필 결과를 클립보드에 복사했어요.');
-    } catch (error) {
-      console.error(`[${EXTENSION_NAME}] copy failed`, error);
-      toastr?.error?.('클립보드 복사에 실패했어요.');
-    }
-  }
-}
-
-/**
- * 대필 결과 미리보기 창을 엽니다.
+ * 히스토리 패널을 현재 채팅 기록에 맞게 다시 그립니다.
  *
- * 결과 textarea는 사용자가 직접 수정할 수 있게 해두었습니다.
- * 수정 후 덮어쓰기/아래에 추가/복사를 누르면 수정된 내용이 적용됩니다.
+ * 기록이 없으면 패널을 숨깁니다.
+ * 기록이 있으면 최신 MAX_HISTORY_ITEMS개를 입력창 위에 보여줍니다.
  */
-function openPreviewModal(originalText, rewrittenText) {
-  latestPreviewOriginal = originalText;
-  latestPreviewRewritten = rewrittenText;
+function renderHistoryPanel() {
+  insertHistoryPanel();
 
-  const modal = ensurePreviewModal();
-  const originalBox = modal.querySelector('[data-ghostwriter-original]');
-  const resultTextarea = modal.querySelector('[data-ghostwriter-result]');
+  const panel = document.querySelector(`#${EXTENSION_NAME}-history`);
+  const list = panel?.querySelector('[data-ghostwriter-history-list]');
+  const count = panel?.querySelector('[data-ghostwriter-history-count]');
 
-  originalBox.textContent = latestPreviewOriginal;
-  resultTextarea.value = latestPreviewRewritten;
-  modal.classList.remove('ghostwriter-preview-hidden');
-  resultTextarea.focus();
+  if (!panel || !list || !count) {
+    return;
+  }
+
+  const history = loadHistory();
+  lastRenderedChatKey = getCurrentChatKey();
+  count.textContent = `최근 대필 ${history.length}개`;
+  list.innerHTML = '';
+
+  if (!history.length) {
+    panel.classList.add('ghostwriter-history-hidden');
+    return;
+  }
+
+  panel.classList.remove('ghostwriter-history-hidden');
+
+  history.forEach((item) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ghostwriter-history-item';
+    button.dataset.ghostwriterHistoryId = item.id;
+    button.title = '이 대필 결과를 입력창에 다시 적용합니다.';
+
+    const time = document.createElement('div');
+    time.className = 'ghostwriter-history-time';
+    time.textContent = formatHistoryTime(item.createdAt);
+
+    const body = document.createElement('div');
+    body.className = 'ghostwriter-history-body';
+
+    const original = document.createElement('div');
+    original.className = 'ghostwriter-history-original';
+    original.textContent = shortenText(item.original, 72);
+
+    const rewritten = document.createElement('div');
+    rewritten.className = 'ghostwriter-history-rewritten';
+    rewritten.textContent = shortenText(item.rewritten, 110);
+
+    body.append(original, rewritten);
+    button.append(time, body);
+    list.appendChild(button);
+  });
 }
 
 /**
- * 미리보기 창을 닫습니다.
+ * 히스토리 항목을 클릭했을 때 해당 대필 결과를 입력창에 다시 적용합니다.
  */
-function closePreviewModal() {
-  const modal = document.querySelector(`#${EXTENSION_NAME}-preview`);
-  modal?.classList.add('ghostwriter-preview-hidden');
+function handleHistoryPanelClick(event) {
+  const itemButton = event.target.closest('[data-ghostwriter-history-id]');
+
+  if (!itemButton) {
+    return;
+  }
+
+  const history = loadHistory();
+  const item = history.find((historyItem) => historyItem.id === itemButton.dataset.ghostwriterHistoryId);
+
+  if (!item) {
+    toastr?.warning?.('선택한 대필 기록을 찾지 못했어요.');
+    renderHistoryPanel();
+    return;
+  }
+
+  setInputTextareaValue(item.rewritten);
+  toastr?.success?.('선택한 대필 결과를 입력창에 적용했어요.');
+}
+
+/**
+ * 채팅 이동을 느슨하게 감지해서 히스토리 패널을 갱신합니다.
+ *
+ * SillyTavern의 내부 이벤트 이름은 버전에 따라 달라질 수 있으므로,
+ * 테스트용 확장에서는 2초마다 현재 채팅 키가 바뀌었는지만 확인합니다.
+ */
+function watchChatKeyChanges() {
+  window.setInterval(() => {
+    const currentChatKey = getCurrentChatKey();
+
+    if (currentChatKey !== lastRenderedChatKey) {
+      renderHistoryPanel();
+    }
+  }, 2000);
 }
 
 /**
@@ -374,8 +451,10 @@ async function rewriteCurrentInput() {
       return;
     }
 
-    openPreviewModal(originalText, rewrittenText.trim());
-    toastr?.success?.('대필 결과를 미리보기로 열었어요.');
+    const cleanedText = rewrittenText.trim();
+    setInputTextareaValue(cleanedText);
+    addHistoryItem(originalText, cleanedText);
+    toastr?.success?.('대필 결과로 입력창을 덮어썼어요.');
   } catch (error) {
     console.error(`[${EXTENSION_NAME}] rewrite failed`, error);
     toastr?.error?.('대필 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
@@ -448,7 +527,7 @@ function insertSettingsPanel() {
   panel.innerHTML = `
     <div class="ghostwriter-settings-title">ghostwriter</div>
     <div class="ghostwriter-settings-body">
-      현재 입력창의 초안을 SillyTavern의 활성 API 연결로 유저 시점 3인칭 문장으로 대필해요.
+      현재 입력창의 초안을 유저 시점 3인칭 문장으로 대필하고, 채팅별 최신 기록을 입력창 위에 보여줘요.
     </div>
   `;
 
@@ -464,5 +543,8 @@ function insertSettingsPanel() {
  */
 jQuery(() => {
   insertGhostwriterButton();
+  insertHistoryPanel();
+  renderHistoryPanel();
+  watchChatKeyChanges();
   insertSettingsPanel();
 });
