@@ -5,9 +5,10 @@
  * "유저 시점의 3인칭" 문장으로 대필하는 테스트용 확장입니다.
  *
  * 이 파일에서 초보자가 주로 수정하게 될 부분:
- * 1. DEFAULT_SYSTEM_PROMPT: 대필 규칙을 바꾸는 곳
- * 2. setButtonIcon(): 버튼에 보이는 아이콘을 바꾸는 곳
- * 3. insertGhostwriterButton(): 버튼을 어디에 붙일지 조정하는 곳
+ * 1. DEFAULT_SYSTEM_PROMPT: 절대 깨지면 안 되는 기본 대필 규칙
+ * 2. TONE_PRESETS / LANGUAGE_PRESETS / LENGTH_PRESETS: 설정에서 고르는 옵션
+ * 3. setButtonIcon(): 버튼에 보이는 아이콘
+ * 4. insertGhostwriterButton(): 버튼 위치
  */
 
 // 확장 내부에서 반복해서 쓰는 이름입니다.
@@ -49,11 +50,69 @@ const DEFAULT_SYSTEM_PROMPT = [
   '',
   'CONTENT RULES:',
   '- Preserve the original intent, action, emotion, tone, and meaning.',
+  '- Use past tense prose.',
+  '- If writing in Korean, use natural Korean past-tense endings.',
+  '- If writing in English, use natural English past tense.',
   '- Do not continue the scene.',
   '- Do not add new events, dialogue, backstory, thoughts, or facts.',
   '- Do not answer as {{char}} or <BOT>.',
-  '- Return only the rewritten Korean text, with no labels, notes, or explanations.'
+  '- Return only the rewritten text, with no labels, notes, or explanations.'
 ].join('\n');
+
+// 대필 톤 프리셋입니다.
+// label은 설정 화면에 보이는 이름이고, prompt는 모델에게 전달되는 실제 지시문입니다.
+const TONE_PRESETS = {
+  balanced: {
+    label: '기본',
+    prompt: 'Use a balanced, natural roleplay prose style.'
+  },
+  plain: {
+    label: '담백함',
+    prompt: 'Use plain, restrained prose. Avoid ornate metaphors and excessive emotion.'
+  },
+  delicate: {
+    label: '섬세함',
+    prompt: 'Use emotionally nuanced prose with subtle sensory and body-language detail.'
+  },
+  literary: {
+    label: '문학적',
+    prompt: 'Use polished literary prose with elegant rhythm, but do not become verbose or add new events.'
+  },
+  concise: {
+    label: '짧고 간결함',
+    prompt: 'Use compact prose with minimal elaboration.'
+  }
+};
+
+// 출력 언어 프리셋입니다.
+// 사용자가 고른 언어로만 결과를 반환하게 합니다.
+const LANGUAGE_PRESETS = {
+  ko: {
+    label: '한국어',
+    prompt: 'Write the rewritten output in Korean.'
+  },
+  en: {
+    label: '영어',
+    prompt: 'Write the rewritten output in English.'
+  }
+};
+
+// 길이 프리셋입니다.
+// "길게"도 새 사건이나 새 사실을 추가하는 뜻이 아니라, 표현 밀도를 조금 높이는 뜻입니다.
+const LENGTH_PRESETS = {
+  short: {
+    label: '짧게',
+    prompt: 'Keep the rewrite short and compact. Do not expand details.'
+  },
+  medium: {
+    label: '보통',
+    prompt: 'Keep the rewrite naturally sized and close to the original input.'
+  },
+  long: {
+    label: '길게',
+    prompt: 'Slightly enrich the prose with natural detail, but do not add new events, facts, or dialogue.'
+  }
+};
 
 // 생성 중복 실행을 막기 위한 상태값입니다.
 // 버튼을 빠르게 여러 번 눌러도 요청이 겹치지 않도록 합니다.
@@ -64,9 +123,15 @@ let isGenerating = false;
 const MAX_HISTORY_ITEMS = 3;
 
 // SillyTavern 확장 설정에 저장할 기본값입니다.
-// 현재는 대필용 연결 프로필 이름만 저장합니다.
+// profileName: 대필에 사용할 연결 프로필 이름입니다.
+// tonePreset: 대필 문체를 고르는 값입니다.
+// outputLanguage: 결과 언어를 고르는 값입니다.
+// lengthPreset: 결과 길이를 고르는 값입니다.
 const DEFAULT_SETTINGS = {
-  profileName: ''
+  profileName: '',
+  tonePreset: 'balanced',
+  outputLanguage: 'ko',
+  lengthPreset: 'medium'
 };
 
 // 마지막으로 패널을 그린 채팅 키입니다.
@@ -343,6 +408,17 @@ async function restoreConnectionProfile(profileState) {
 }
 
 /**
+ * 프리셋 객체를 <option> HTML로 바꿉니다.
+ *
+ * 설정 UI의 톤/언어/길이 드롭다운이 모두 같은 구조라서 공통 함수로 만들었습니다.
+ */
+function buildPresetOptions(presets) {
+  return Object.entries(presets)
+    .map(([value, preset]) => `<option value="${value}">${preset.label}</option>`)
+    .join('');
+}
+
+/**
  * 현재 채팅을 구분하기 위한 키를 만듭니다.
  *
  * SillyTavern 버전에 따라 context 안의 필드명이 다를 수 있어서,
@@ -465,6 +541,47 @@ function formatHistoryTime(timestamp) {
 }
 
 /**
+ * 설정값으로 프리셋 객체를 안전하게 가져옵니다.
+ *
+ * 저장된 값이 오래됐거나 잘못된 값이면 기본값으로 되돌립니다.
+ */
+function getPresetValue(presets, presetKey, fallbackKey) {
+  return presets[presetKey] || presets[fallbackKey];
+}
+
+/**
+ * 실제 생성에 사용할 system prompt를 조립합니다.
+ *
+ * 구조:
+ * 1. DEFAULT_SYSTEM_PROMPT: 시점/주어/금지사항 같은 고정 안전 규칙
+ * 2. TONE PRESET: 설정에서 고른 문체
+ * 3. LANGUAGE PRESET: 설정에서 고른 출력 언어
+ * 4. LENGTH PRESET: 설정에서 고른 길이
+ *
+ * 고정 안전 규칙을 항상 앞에 두는 이유:
+ * 톤이나 길이 옵션이 강해져도 {{char}} 시점으로 넘어가거나 새 사건을 만들지 않게 하기 위해서입니다.
+ */
+function buildSystemPrompt() {
+  const settings = getSettings();
+  const tonePreset = getPresetValue(TONE_PRESETS, settings.tonePreset, DEFAULT_SETTINGS.tonePreset);
+  const languagePreset = getPresetValue(LANGUAGE_PRESETS, settings.outputLanguage, DEFAULT_SETTINGS.outputLanguage);
+  const lengthPreset = getPresetValue(LENGTH_PRESETS, settings.lengthPreset, DEFAULT_SETTINGS.lengthPreset);
+
+  return [
+    DEFAULT_SYSTEM_PROMPT,
+    '',
+    'TONE PRESET:',
+    tonePreset.prompt,
+    '',
+    'OUTPUT LANGUAGE:',
+    languagePreset.prompt,
+    '',
+    'LENGTH PRESET:',
+    lengthPreset.prompt
+  ].join('\n');
+}
+
+/**
  * 모델에 보낼 실제 프롬프트를 만듭니다.
  *
  * originalText는 유저가 입력창에 쓴 원문입니다.
@@ -490,7 +607,7 @@ function buildRewritePrompt(originalText) {
     '</USER_INPUT>',
     '',
     'Output requirement:',
-    'Write only the rewritten Korean third-person prose where {{user}} / {{User}} / <USER> is the actor.'
+    'Write only the rewritten third-person prose where {{user}} / {{User}} / <USER> is the actor.'
   ].join('\n');
 }
 
@@ -696,7 +813,7 @@ async function rewriteCurrentInput() {
     profileState = await switchToGhostwriterProfile();
 
     const rewrittenText = await context.generateRaw({
-      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      systemPrompt: buildSystemPrompt(),
       prompt: buildRewritePrompt(originalText)
     });
 
@@ -817,6 +934,27 @@ function insertSettingsPanel() {
         <div class="ghostwriter-settings-hint">
           SillyTavern API 연결의 연결 프로필에 저장된 항목 중 하나를 선택해요. 비워두면 현재 연결을 그대로 사용해요.
         </div>
+        <label class="ghostwriter-settings-field" for="${EXTENSION_NAME}-tone-preset">
+          <span>대필 톤</span>
+          <select id="${EXTENSION_NAME}-tone-preset" class="text_pole">
+            ${buildPresetOptions(TONE_PRESETS)}
+          </select>
+        </label>
+        <label class="ghostwriter-settings-field" for="${EXTENSION_NAME}-output-language">
+          <span>출력 언어</span>
+          <select id="${EXTENSION_NAME}-output-language" class="text_pole">
+            ${buildPresetOptions(LANGUAGE_PRESETS)}
+          </select>
+        </label>
+        <label class="ghostwriter-settings-field" for="${EXTENSION_NAME}-length-preset">
+          <span>길이</span>
+          <select id="${EXTENSION_NAME}-length-preset" class="text_pole">
+            ${buildPresetOptions(LENGTH_PRESETS)}
+          </select>
+        </label>
+        <div class="ghostwriter-settings-hint">
+          시제는 설정 없이 과거형으로 고정돼요. 톤, 언어, 길이만 선택해 대필 스타일을 조정해요.
+        </div>
       </div>
     </div>
   `;
@@ -825,9 +963,30 @@ function insertSettingsPanel() {
 
   const profileSelect = panel.querySelector(`#${EXTENSION_NAME}-profile-name`);
   const refreshButton = panel.querySelector('[data-ghostwriter-profile-refresh]');
+  const toneSelect = panel.querySelector(`#${EXTENSION_NAME}-tone-preset`);
+  const languageSelect = panel.querySelector(`#${EXTENSION_NAME}-output-language`);
+  const lengthSelect = panel.querySelector(`#${EXTENSION_NAME}-length-preset`);
 
   profileSelect.addEventListener('change', () => {
     getSettings().profileName = profileSelect.value;
+    saveSettings();
+  });
+
+  toneSelect.value = TONE_PRESETS[settings.tonePreset] ? settings.tonePreset : DEFAULT_SETTINGS.tonePreset;
+  toneSelect.addEventListener('change', () => {
+    getSettings().tonePreset = toneSelect.value;
+    saveSettings();
+  });
+
+  languageSelect.value = LANGUAGE_PRESETS[settings.outputLanguage] ? settings.outputLanguage : DEFAULT_SETTINGS.outputLanguage;
+  languageSelect.addEventListener('change', () => {
+    getSettings().outputLanguage = languageSelect.value;
+    saveSettings();
+  });
+
+  lengthSelect.value = LENGTH_PRESETS[settings.lengthPreset] ? settings.lengthPreset : DEFAULT_SETTINGS.lengthPreset;
+  lengthSelect.addEventListener('change', () => {
+    getSettings().lengthPreset = lengthSelect.value;
     saveSettings();
   });
 
