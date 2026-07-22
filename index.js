@@ -166,6 +166,64 @@ const CONTEXT_PRESETS = {
   }
 };
 
+// 채팅별/유저별로 따로 저장할 문체 조절 기본값입니다.
+// 0은 "페르소나 기준 유지"입니다.
+// 음수/양수는 페르소나를 완전히 바꾸는 값이 아니라, 살짝 밀어주는 보조 지시로만 사용합니다.
+const DEFAULT_STYLE_CONTROLS = {
+  speechStyle: 0,
+  moodStyle: 0
+};
+
+// 말투 슬라이더 값이 실제 프롬프트에서 어떤 의미인지 정의합니다.
+// -2는 격식 쪽, +2는 구어체 쪽입니다.
+const SPEECH_STYLE_PROMPTS = {
+  '-2': {
+    label: '격식',
+    prompt: 'Make speech and narration more formal, polite, and socially distant than the persona baseline.'
+  },
+  '-1': {
+    label: '약간 격식',
+    prompt: 'Make speech and narration slightly more formal than the persona baseline.'
+  },
+  0: {
+    label: '기준',
+    prompt: 'Keep speech style at the {{user}} persona baseline.'
+  },
+  1: {
+    label: '약간 구어체',
+    prompt: 'Make speech and narration slightly more casual and conversational than the persona baseline.'
+  },
+  2: {
+    label: '구어체',
+    prompt: 'Make speech and narration more casual, colloquial, and relaxed than the persona baseline.'
+  }
+};
+
+// 분위기 슬라이더 값이 실제 프롬프트에서 어떤 의미인지 정의합니다.
+// -2는 진지함 쪽, +2는 장난기 쪽입니다.
+const MOOD_STYLE_PROMPTS = {
+  '-2': {
+    label: '진지함',
+    prompt: 'Make the emotional atmosphere more serious, calm, and grounded than the persona baseline.'
+  },
+  '-1': {
+    label: '약간 진지함',
+    prompt: 'Make the emotional atmosphere slightly more serious and restrained than the persona baseline.'
+  },
+  0: {
+    label: '기준',
+    prompt: 'Keep the emotional atmosphere at the {{user}} persona baseline.'
+  },
+  1: {
+    label: '약간 가벼움',
+    prompt: 'Make the emotional atmosphere slightly lighter, softer, or more playful than the persona baseline.'
+  },
+  2: {
+    label: '장난기',
+    prompt: 'Make the emotional atmosphere more lighthearted, playful, and teasing than the persona baseline.'
+  }
+};
+
 // 생성 중복 실행을 막기 위한 상태값입니다.
 // 버튼을 빠르게 여러 번 눌러도 요청이 겹치지 않도록 합니다.
 let isGenerating = false;
@@ -191,6 +249,10 @@ const DEFAULT_SETTINGS = {
 // 마지막으로 패널을 그린 채팅 키입니다.
 // 유저가 다른 채팅으로 이동했는지 감지할 때 사용합니다.
 let lastRenderedChatKey = '';
+
+// 마지막으로 설정 UI에 반영한 말투/분위기 저장 키입니다.
+// 같은 채팅 안에서 활성 유저 페르소나만 바뀌는 경우도 감지하기 위해 따로 둡니다.
+let lastRenderedStyleControlsKey = '';
 
 // 사용자가 직접 닫은 패널인지 기억합니다.
 // 대필 기록이 있어도 닫기 버튼을 누르면 숨기고, 새 대필이 생성되면 다시 열립니다.
@@ -518,6 +580,87 @@ function buildPresetOptions(presets) {
 }
 
 /**
+ * 설정 UI에 들어갈 문체 조절 슬라이더 HTML을 만듭니다.
+ *
+ * min/max/step:
+ * - -2: 왼쪽 성향 강함
+ * - -1: 왼쪽 성향 약함
+ * -  0: {{user}} 페르소나 기준 유지
+ * -  1: 오른쪽 성향 약함
+ * -  2: 오른쪽 성향 강함
+ */
+function buildStyleSliderHtml(id, label, leftLabel, rightLabel) {
+  return `
+    <div class="ghostwriter-style-control">
+      <div class="ghostwriter-style-control-header">
+        <span>${label}</span>
+        <strong data-ghostwriter-style-label-for="${id}">기준</strong>
+      </div>
+      <div class="ghostwriter-style-slider-row">
+        <span>${leftLabel}</span>
+        <input
+          id="${id}"
+          class="ghostwriter-style-slider"
+          type="range"
+          min="-2"
+          max="2"
+          step="1"
+          value="0"
+        >
+        <span>${rightLabel}</span>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * 문체 슬라이더의 현재 값을 사람이 읽는 라벨로 바꿉니다.
+ */
+function getStyleControlLabel(presets, value) {
+  const normalizedValue = normalizeStyleControlValue(value);
+  return (presets[normalizedValue] || presets[0]).label;
+}
+
+/**
+ * 문체 슬라이더 옆의 현재값 라벨을 갱신합니다.
+ */
+function updateStyleSliderLabel(panel, slider, presets) {
+  const label = panel.querySelector(`[data-ghostwriter-style-label-for="${slider.id}"]`);
+
+  if (label) {
+    label.textContent = getStyleControlLabel(presets, slider.value);
+  }
+}
+
+/**
+ * 설정 패널의 말투/분위기 슬라이더를 현재 채팅 + 현재 유저 페르소나 저장값으로 맞춥니다.
+ *
+ * 채팅을 바꾸거나 SillyTavern의 활성 유저 페르소나를 바꿨을 때,
+ * 이전 유저의 슬라이더 값이 계속 보이면 헷갈리므로 별도 helper로 갱신합니다.
+ */
+function syncStyleControlsPanel() {
+  const panel = document.querySelector(`#${EXTENSION_NAME}-settings`);
+
+  if (!panel) {
+    return;
+  }
+
+  const speechStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-speech-style`);
+  const moodStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-mood-style`);
+
+  if (!speechStyleSlider || !moodStyleSlider) {
+    return;
+  }
+
+  const styleControls = loadStyleControls();
+  speechStyleSlider.value = styleControls.speechStyle;
+  moodStyleSlider.value = styleControls.moodStyle;
+  updateStyleSliderLabel(panel, speechStyleSlider, SPEECH_STYLE_PROMPTS);
+  updateStyleSliderLabel(panel, moodStyleSlider, MOOD_STYLE_PROMPTS);
+  lastRenderedStyleControlsKey = getStyleControlsStorageKey();
+}
+
+/**
  * 대필 옵션만 기본값으로 되돌립니다.
  *
  * 유지하는 값:
@@ -528,6 +671,7 @@ function buildPresetOptions(presets) {
  * - outputLanguage: 출력 언어
  * - lengthPreset: 길이
  * - contextPreset: 참고할 최신 메시지
+ * - speechStyle / moodStyle: 현재 채팅 + 현재 유저 페르소나의 말투/분위기 슬라이더
  */
 function resetRewriteOptions(selects) {
   const settings = getSettings();
@@ -535,11 +679,16 @@ function resetRewriteOptions(selects) {
   settings.outputLanguage = DEFAULT_SETTINGS.outputLanguage;
   settings.lengthPreset = DEFAULT_SETTINGS.lengthPreset;
   settings.contextPreset = DEFAULT_SETTINGS.contextPreset;
+  saveStyleControls(DEFAULT_STYLE_CONTROLS);
 
   selects.toneSelect.value = settings.tonePreset;
   selects.languageSelect.value = settings.outputLanguage;
   selects.lengthSelect.value = settings.lengthPreset;
   selects.contextSelect.value = settings.contextPreset;
+  selects.speechStyleSlider.value = DEFAULT_STYLE_CONTROLS.speechStyle;
+  selects.moodStyleSlider.value = DEFAULT_STYLE_CONTROLS.moodStyle;
+  updateStyleSliderLabel(selects.panel, selects.speechStyleSlider, SPEECH_STYLE_PROMPTS);
+  updateStyleSliderLabel(selects.panel, selects.moodStyleSlider, MOOD_STYLE_PROMPTS);
 
   saveSettings();
   toastr?.success?.('대필 옵션을 기본값으로 되돌렸어요.');
@@ -575,6 +724,79 @@ function getCurrentChatKey() {
 }
 
 /**
+ * SillyTavern이 주는 페르소나 후보값을 저장 키용 문자열로 바꿉니다.
+ *
+ * 어떤 버전/확장은 페르소나를 문자열로 주고,
+ * 어떤 경우에는 { id, name, key } 같은 객체로 줄 수 있습니다.
+ */
+function getPersonaCandidateText(candidate) {
+  if (!candidate) {
+    return '';
+  }
+
+  if (typeof candidate === 'string' || typeof candidate === 'number') {
+    return String(candidate).trim();
+  }
+
+  if (typeof candidate === 'object') {
+    return String(
+      candidate.id ??
+      candidate.key ??
+      candidate.name ??
+      candidate.personaName ??
+      candidate.userName ??
+      ''
+    ).trim();
+  }
+
+  return '';
+}
+
+/**
+ * 현재 활성화된 유저 페르소나를 구분하기 위한 키를 만듭니다.
+ *
+ * SillyTavern 버전마다 현재 유저 이름/페르소나 필드명이 다를 수 있으므로,
+ * 여러 후보를 순서대로 확인합니다.
+ *
+ * 이 값은 말투/분위기 슬라이더 저장에만 씁니다.
+ * 정확한 id를 못 찾으면 이름 후보를 쓰고, 그래도 없으면 default-user로 저장합니다.
+ */
+function getCurrentUserPersonaKey() {
+  const context = getSillyTavernContext();
+  const browserWindow = typeof window !== 'undefined' ? window : {};
+  const candidates = [
+    context?.persona,
+    context?.personaName,
+    context?.userPersona,
+    context?.userPersonaName,
+    context?.name1,
+    context?.userName,
+    browserWindow.name1,
+    browserWindow.userName
+  ];
+
+  const personaName = candidates
+    .map(getPersonaCandidateText)
+    .find(Boolean);
+
+  return personaName || 'default-user';
+}
+
+/**
+ * localStorage 키에 들어가면 헷갈릴 수 있는 문자를 정리합니다.
+ *
+ * 저장 키는 사람이 읽을 필요가 없으므로,
+ * 공백/기호를 안전한 밑줄로 바꿔 충돌과 파싱 문제를 줄입니다.
+ */
+function sanitizeStorageKeyPart(value) {
+  return String(value || 'unknown')
+    .trim()
+    .replace(/[^A-Za-z0-9가-힣_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'unknown';
+}
+
+/**
  * localStorage에 사용할 실제 저장 키를 만듭니다.
  *
  * 채팅 키 앞에 확장 이름을 붙여 다른 확장/사이트 데이터와 충돌하지 않게 합니다.
@@ -584,12 +806,81 @@ function getHistoryStorageKey() {
 }
 
 /**
+ * 말투/분위기 조절값을 저장하는 키를 만듭니다.
+ *
+ * 요청한 구조:
+ * - 채팅별
+ * - 현재 활성화된 유저 페르소나별
+ *
+ * 예:
+ * ghostwriter.style.character_3_chat_current.Hermione
+ */
+function getStyleControlsStorageKey() {
+  return [
+    EXTENSION_NAME,
+    'style',
+    sanitizeStorageKeyPart(getCurrentChatKey()),
+    sanitizeStorageKeyPart(getCurrentUserPersonaKey())
+  ].join('.');
+}
+
+/**
  * 히스토리 패널 닫힘 상태를 저장하는 키를 만듭니다.
  *
  * 기록은 채팅별로 나뉘므로, 패널을 닫았는지도 채팅별로 따로 기억합니다.
  */
 function getHistoryClosedStorageKey() {
   return `${EXTENSION_NAME}.historyClosed.${getCurrentChatKey()}`;
+}
+
+/**
+ * 슬라이더 값을 -2~2 범위의 정수로 정리합니다.
+ *
+ * localStorage 데이터가 깨졌거나 예전 형식이면,
+ * 프롬프트에 이상한 값이 들어가지 않도록 기본값으로 되돌립니다.
+ */
+function normalizeStyleControlValue(value) {
+  const numberValue = Number.parseInt(value, 10);
+
+  if (!Number.isFinite(numberValue)) {
+    return 0;
+  }
+
+  return Math.max(-2, Math.min(2, numberValue));
+}
+
+/**
+ * 현재 채팅 + 현재 유저 페르소나에 저장된 말투/분위기 조절값을 불러옵니다.
+ */
+function loadStyleControls() {
+  try {
+    const rawControls = localStorage.getItem(getStyleControlsStorageKey());
+    const parsedControls = rawControls ? JSON.parse(rawControls) : {};
+
+    return {
+      speechStyle: normalizeStyleControlValue(parsedControls.speechStyle ?? DEFAULT_STYLE_CONTROLS.speechStyle),
+      moodStyle: normalizeStyleControlValue(parsedControls.moodStyle ?? DEFAULT_STYLE_CONTROLS.moodStyle)
+    };
+  } catch (error) {
+    console.warn(`[${EXTENSION_NAME}] style controls load failed`, error);
+    return { ...DEFAULT_STYLE_CONTROLS };
+  }
+}
+
+/**
+ * 현재 채팅 + 현재 유저 페르소나에 말투/분위기 조절값을 저장합니다.
+ */
+function saveStyleControls(styleControls) {
+  try {
+    const normalizedControls = {
+      speechStyle: normalizeStyleControlValue(styleControls.speechStyle),
+      moodStyle: normalizeStyleControlValue(styleControls.moodStyle)
+    };
+
+    localStorage.setItem(getStyleControlsStorageKey(), JSON.stringify(normalizedControls));
+  } catch (error) {
+    console.warn(`[${EXTENSION_NAME}] style controls save failed`, error);
+  }
 }
 
 /**
@@ -674,6 +965,27 @@ function formatHistoryTime(timestamp) {
  */
 function getPresetValue(presets, presetKey, fallbackKey) {
   return presets[presetKey] || presets[fallbackKey];
+}
+
+/**
+ * 말투/분위기 슬라이더 값을 실제 프롬프트 문장으로 바꿉니다.
+ *
+ * 중요한 원칙:
+ * - 슬라이더 중앙값 0은 "무색무취 기본값"이 아니라 "{{user}} 페르소나 기준 유지"입니다.
+ * - 슬라이더는 페르소나를 덮어쓰지 않고, 페르소나 문체를 좌우로 조금 조절합니다.
+ */
+function buildStyleControlsPrompt() {
+  const styleControls = loadStyleControls();
+  const speechStyle = SPEECH_STYLE_PROMPTS[styleControls.speechStyle] || SPEECH_STYLE_PROMPTS[0];
+  const moodStyle = MOOD_STYLE_PROMPTS[styleControls.moodStyle] || MOOD_STYLE_PROMPTS[0];
+
+  return [
+    'STYLE CONTROLS:',
+    `- Speech style control: ${speechStyle.prompt}`,
+    `- Mood control: ${moodStyle.prompt}`,
+    '- Treat these controls as gentle adjustments to the {{user}} persona, not replacements.',
+    '- If a control conflicts with the {{user}} persona sheet, keep the persona recognizable and apply the control subtly.'
+  ].join('\n');
 }
 
 /**
@@ -770,6 +1082,8 @@ function buildSystemPrompt() {
     '',
     'LENGTH PRESET:',
     lengthPreset.prompt,
+    '',
+    buildStyleControlsPrompt(),
     '',
     'RECENT CONTEXT PRESET:',
     contextPreset.prompt
@@ -1264,10 +1578,15 @@ async function handleHistoryPanelClick(event) {
 function watchChatKeyChanges() {
   window.setInterval(() => {
     const currentChatKey = getCurrentChatKey();
+    const currentStyleControlsKey = getStyleControlsStorageKey();
 
     if (currentChatKey !== lastRenderedChatKey) {
       isHistoryPanelClosed = loadHistoryPanelClosed();
       renderHistoryPanel();
+    }
+
+    if (currentStyleControlsKey !== lastRenderedStyleControlsKey) {
+      syncStyleControlsPanel();
     }
   }, 2000);
 }
@@ -1394,6 +1713,7 @@ function insertSettingsPanel() {
   }
 
   const settings = getSettings();
+  const styleControls = loadStyleControls();
   const panel = document.createElement('div');
   panel.id = `${EXTENSION_NAME}-settings`;
   panel.className = 'ghostwriter-settings';
@@ -1455,6 +1775,14 @@ function insertSettingsPanel() {
         <div class="ghostwriter-settings-hint">
           대필은 과거형 3인칭으로 고정돼요. 최신 메시지는 장면 참고용이며, 다시 쓰는 대상은 입력창 원문뿐이에요.
         </div>
+        <div class="ghostwriter-style-controls">
+          <div class="ghostwriter-style-controls-title">페르소나 문체 조절</div>
+          <div class="ghostwriter-settings-hint">
+            가운데는 현재 {{user}} 페르소나 기준이에요. 채팅별 현재 유저 페르소나마다 따로 저장돼요.
+          </div>
+          ${buildStyleSliderHtml(`${EXTENSION_NAME}-speech-style`, '말투', '격식', '구어체')}
+          ${buildStyleSliderHtml(`${EXTENSION_NAME}-mood-style`, '분위기', '진지함', '장난기')}
+        </div>
         <div class="ghostwriter-settings-actions">
           <button
             type="button"
@@ -1476,6 +1804,8 @@ function insertSettingsPanel() {
   const languageSelect = panel.querySelector(`#${EXTENSION_NAME}-output-language`);
   const lengthSelect = panel.querySelector(`#${EXTENSION_NAME}-length-preset`);
   const contextSelect = panel.querySelector(`#${EXTENSION_NAME}-context-preset`);
+  const speechStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-speech-style`);
+  const moodStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-mood-style`);
   const resetButton = panel.querySelector('[data-ghostwriter-reset-options]');
 
   profileSelect.addEventListener('change', () => {
@@ -1507,12 +1837,33 @@ function insertSettingsPanel() {
     saveSettings();
   });
 
+  speechStyleSlider.value = styleControls.speechStyle;
+  updateStyleSliderLabel(panel, speechStyleSlider, SPEECH_STYLE_PROMPTS);
+  speechStyleSlider.addEventListener('input', () => {
+    const currentControls = loadStyleControls();
+    currentControls.speechStyle = normalizeStyleControlValue(speechStyleSlider.value);
+    saveStyleControls(currentControls);
+    updateStyleSliderLabel(panel, speechStyleSlider, SPEECH_STYLE_PROMPTS);
+  });
+
+  moodStyleSlider.value = styleControls.moodStyle;
+  updateStyleSliderLabel(panel, moodStyleSlider, MOOD_STYLE_PROMPTS);
+  moodStyleSlider.addEventListener('input', () => {
+    const currentControls = loadStyleControls();
+    currentControls.moodStyle = normalizeStyleControlValue(moodStyleSlider.value);
+    saveStyleControls(currentControls);
+    updateStyleSliderLabel(panel, moodStyleSlider, MOOD_STYLE_PROMPTS);
+  });
+
   resetButton.addEventListener('click', () => {
     resetRewriteOptions({
+      panel,
       toneSelect,
       languageSelect,
       lengthSelect,
-      contextSelect
+      contextSelect,
+      speechStyleSlider,
+      moodStyleSlider
     });
   });
 
@@ -1520,6 +1871,7 @@ function insertSettingsPanel() {
     populateConnectionProfileSelect(panel);
   });
 
+  lastRenderedStyleControlsKey = getStyleControlsStorageKey();
   populateConnectionProfileSelect(panel, settings.profileName || '');
 }
 

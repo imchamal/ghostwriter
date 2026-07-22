@@ -124,6 +124,59 @@
   color: var(--SmartThemeEmColor, inherit);
 }
 
+.ghostwriter-style-controls {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--SmartThemeBorderColor, rgba(0, 0, 0, 0.12));
+}
+
+.ghostwriter-style-controls-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.ghostwriter-style-control {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ghostwriter-style-control-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.ghostwriter-style-control-header strong {
+  flex: 0 0 auto;
+  color: var(--SmartThemeEmColor, inherit);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ghostwriter-style-slider-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 52px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--SmartThemeEmColor, inherit);
+}
+
+.ghostwriter-style-slider-row span:last-child {
+  text-align: right;
+}
+
+.ghostwriter-style-slider {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
+}
+
 .ghostwriter-settings-actions {
   display: flex;
   justify-content: flex-end;
