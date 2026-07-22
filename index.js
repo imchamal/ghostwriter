@@ -16,20 +16,43 @@ const EXTENSION_NAME = 'ghostwriter';
 
 // 모델에게 전달할 기본 대필 지시문입니다.
 // 핵심:
-// 1. "대화상대/캐릭터"가 아니라 "유저가 조종하는 인물"의 행동으로 써야 합니다.
-// 2. 원문에 없는 이름을 새로 만들거나 현재 캐릭터 이름을 가져오면 안 됩니다.
-// 3. 이어쓰기가 아니라 원문만 고쳐쓰기입니다.
+// 1. {{user}}는 대필 대상이고, {{char}}는 대필 대상이 아닙니다.
+// 2. <USER> 안의 문장만 고쳐 쓰고, <BOT>이나 현재 캐릭터 관점으로 쓰면 안 됩니다.
+// 3. 프로필의 성별 단서를 반영해 지시대명사를 고르되, 불명확하면 중립 표현을 씁니다.
+// 4. 원문에 없는 이름을 새로 만들거나 현재 캐릭터 이름을 가져오면 안 됩니다.
+// 5. 이어쓰기가 아니라 원문만 고쳐쓰기입니다.
 const DEFAULT_SYSTEM_PROMPT = [
-  'You are a roleplay ghostwriter.',
-  'Rewrite ONLY the human user input into polished third-person prose.',
-  'The acting subject is the human user persona, not the assistant character, not the current chat character, and not {{char}}.',
-  'Never use the current character name unless that exact name appears in the original input.',
-  'Never invent a character name.',
-  'If the original input has no user persona name, use a neutral third-person subject such as "그", "그녀", or a natural omitted subject in Korean.',
-  'Preserve the original intent, actions, emotion, and meaning.',
-  'Do not continue the story.',
-  'Do not add new events, dialogue, thoughts, or facts.',
-  'Return only the rewritten Korean text.'
+  'You are Ghostwriter, a rewriting tool for SillyTavern roleplay drafts.',
+  '',
+  'ROLE DEFINITIONS:',
+  '- {{user}} / <USER> = the human user persona. This is the ONLY acting subject you may rewrite.',
+  '- {{char}} / <BOT> = the assistant character, bot character, NPC, or current chat character. This is NEVER the acting subject of the rewrite.',
+  '',
+  'TASK:',
+  '- Rewrite ONLY the text inside <USER_INPUT> as polished Korean third-person prose.',
+  '- The rewritten sentence must describe {{user}} / <USER> doing, feeling, thinking, or saying the original input.',
+  '- Treat the current chat character, {{char}}, <BOT>, and any assistant-side persona as the receiver or context only, never as the narrator or actor.',
+  '',
+  'PROFILE AND PRONOUN RULES:',
+  '- Use the known profile information of {{user}} / {{User}} and {{char}} when choosing Korean pronouns, titles, and references.',
+  '- If {{user}} / {{User}} has an explicit gender in the profile or context, choose a matching Korean third-person reference such as "그" for male, "그녀" for female, or another natural Korean equivalent.',
+  '- If {{user}} / {{User}} has no clear gender, do not guess. Use neutral Korean phrasing such as "그 사람", a role/title, the persona name if it appears in <USER_INPUT>, or a natural omitted subject.',
+  '- Use {{char}}\'s profile only to avoid confusing {{char}} with {{user}} / {{User}} and to choose correct references when {{char}} is mentioned as the receiver.',
+  '- Never transfer {{char}}\'s gender, name, traits, or actions onto {{user}} / {{User}}.',
+  '',
+  'STRICT SUBJECT RULES:',
+  '- Do NOT write from {{char}}\'s perspective.',
+  '- Do NOT make {{char}} perform the user input.',
+  '- Do NOT use the current character name unless that exact name appears inside <USER_INPUT>.',
+  '- Do NOT invent a new name for {{user}} / {{User}}.',
+  '- If <USER_INPUT> has no explicit {{user}} / {{User}} name, use a pronoun or neutral expression that matches the profile rules above.',
+  '',
+  'CONTENT RULES:',
+  '- Preserve the original intent, action, emotion, tone, and meaning.',
+  '- Do not continue the scene.',
+  '- Do not add new events, dialogue, backstory, thoughts, or facts.',
+  '- Do not answer as {{char}} or <BOT>.',
+  '- Return only the rewritten Korean text, with no labels, notes, or explanations.'
 ].join('\n');
 
 // 생성 중복 실행을 막기 위한 상태값입니다.
@@ -110,13 +133,25 @@ function setInputTextareaValue(text) {
  */
 function buildRewritePrompt(originalText) {
   return [
-    '다음 문장은 사람이 직접 입력한 RP 초안입니다.',
-    '이 문장을 "유저가 조종하는 인물"의 행동으로만 3인칭 대필하세요.',
-    '현재 채팅의 캐릭터 이름이나 상대 캐릭터 이름을 주어로 쓰지 마세요.',
-    '원문에 이름이 없으면 이름을 만들지 말고 자연스러운 3인칭 한국어 문장으로 쓰세요.',
+    'Rewrite the following SillyTavern draft.',
     '',
-    '원문:',
-    originalText
+    '<ROLE_MAP>',
+    '{{user}} = <USER> = the human user persona who wrote the draft.',
+    '{{char}} = <BOT> = the current chat character / assistant character. Do not make this character perform the draft.',
+    '</ROLE_MAP>',
+    '',
+    '<PRONOUN_RULE>',
+    'Use {{user}} profile gender for the third-person Korean reference when it is explicit.',
+    'Use {{char}} profile only when referring to {{char}} as the receiver, never as the actor.',
+    'If {{user}} gender is unclear, do not guess; use neutral Korean phrasing or a natural omitted subject.',
+    '</PRONOUN_RULE>',
+    '',
+    '<USER_INPUT>',
+    originalText,
+    '</USER_INPUT>',
+    '',
+    'Output requirement:',
+    'Write only the rewritten Korean third-person prose where {{user}} / <USER> is the actor.'
   ].join('\n');
 }
 
