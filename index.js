@@ -60,8 +60,14 @@ const DEFAULT_SYSTEM_PROMPT = [
 let isGenerating = false;
 
 // 채팅별로 저장할 대필 기록 개수입니다.
-// 너무 많이 저장하면 브라우저 localStorage가 지저분해지므로, 테스트 버전에서는 5개만 보여주고 저장합니다.
-const MAX_HISTORY_ITEMS = 5;
+// 요청대로 옵션 없이 항상 최신 3개만 보여주고 저장합니다.
+const MAX_HISTORY_ITEMS = 3;
+
+// SillyTavern 확장 설정에 저장할 기본값입니다.
+// 현재는 대필용 연결 프로필 이름만 저장합니다.
+const DEFAULT_SETTINGS = {
+  profileName: ''
+};
 
 // 마지막으로 패널을 그린 채팅 키입니다.
 // 유저가 다른 채팅으로 이동했는지 감지할 때 사용합니다.
@@ -70,6 +76,42 @@ let lastRenderedChatKey = '';
 // 사용자가 직접 닫은 패널인지 기억합니다.
 // 대필 기록이 있어도 닫기 버튼을 누르면 숨기고, 새 대필이 생성되면 다시 열립니다.
 let isHistoryPanelClosed = false;
+
+/**
+ * ghostwriter 설정을 가져옵니다.
+ *
+ * SillyTavern의 extensionSettings에 저장하므로,
+ * 브라우저를 새로고침해도 설정이 유지됩니다.
+ */
+function getSettings() {
+  const context = getSillyTavernContext();
+
+  if (!context?.extensionSettings) {
+    return { ...DEFAULT_SETTINGS };
+  }
+
+  if (!context.extensionSettings[EXTENSION_NAME]) {
+    context.extensionSettings[EXTENSION_NAME] = { ...DEFAULT_SETTINGS };
+  }
+
+  for (const key of Object.keys(DEFAULT_SETTINGS)) {
+    if (!Object.hasOwn(context.extensionSettings[EXTENSION_NAME], key)) {
+      context.extensionSettings[EXTENSION_NAME][key] = DEFAULT_SETTINGS[key];
+    }
+  }
+
+  return context.extensionSettings[EXTENSION_NAME];
+}
+
+/**
+ * 설정을 SillyTavern에 저장하도록 요청합니다.
+ *
+ * saveSettingsDebounced는 짧은 시간 안의 여러 변경을 묶어서 저장해 줍니다.
+ */
+function saveSettings() {
+  const context = getSillyTavernContext();
+  context?.saveSettingsDebounced?.();
+}
 
 /**
  * 버튼 안의 아이콘을 설정합니다.
@@ -135,6 +177,145 @@ function setInputTextareaValue(text) {
   textarea.value = text;
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
   textarea.focus();
+}
+
+/**
+ * slash command 인자에 공백이나 따옴표가 있어도 안전하게 전달하기 위해 감쌉니다.
+ *
+ * 예:
+ * My Profile -> "My Profile"
+ * Bob's "Fast" API -> "Bob's \"Fast\" API"
+ */
+function quoteSlashArgument(value) {
+  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * slash command 실행 결과에서 실제 텍스트 결과를 꺼냅니다.
+ *
+ * SillyTavern 버전에 따라 반환값이 문자열이거나,
+ * { pipe: "..." } 형태일 수 있어서 둘 다 처리합니다.
+ */
+function getSlashResultText(result) {
+  if (typeof result === 'string') {
+    return result.trim();
+  }
+
+  if (typeof result?.pipe === 'string') {
+    return result.pipe.trim();
+  }
+
+  if (typeof result?.value === 'string') {
+    return result.value.trim();
+  }
+
+  return '';
+}
+
+/**
+ * SillyTavern slash command 실행 함수를 가져옵니다.
+ *
+ * 연결 프로필은 공식적으로 `/profile` slash command를 제공합니다.
+ * 확장 context에 실행 함수가 있으면 그것을 먼저 쓰고,
+ * 없으면 SillyTavern의 slash-commands 모듈을 동적으로 불러옵니다.
+ */
+async function getSlashCommandExecutor() {
+  const context = getSillyTavernContext();
+
+  if (typeof context?.executeSlashCommands === 'function') {
+    return context.executeSlashCommands;
+  }
+
+  if (typeof window.executeSlashCommands === 'function') {
+    return window.executeSlashCommands;
+  }
+
+  const slashCommandsModule = await import('/scripts/slash-commands.js');
+  return slashCommandsModule.executeSlashCommands;
+}
+
+/**
+ * slash command 하나를 실행하고 텍스트 결과만 반환합니다.
+ */
+async function executeSlashCommand(commandText) {
+  const executeSlashCommands = await getSlashCommandExecutor();
+  const result = await executeSlashCommands(commandText, true, null, true);
+  return getSlashResultText(result);
+}
+
+/**
+ * 현재 선택된 연결 프로필 이름을 가져옵니다.
+ *
+ * SillyTavern Connection Profiles 공식 slash command:
+ * - /profile        현재 프로필 이름 반환
+ * - /profile name   해당 프로필로 전환
+ */
+async function getCurrentConnectionProfileName() {
+  return executeSlashCommand('/profile');
+}
+
+/**
+ * 지정한 연결 프로필로 전환합니다.
+ */
+async function switchConnectionProfile(profileName) {
+  const trimmedProfileName = String(profileName || '').trim();
+
+  if (!trimmedProfileName) {
+    return '';
+  }
+
+  return executeSlashCommand(`/profile ${quoteSlashArgument(trimmedProfileName)}`);
+}
+
+/**
+ * 설정된 대필용 연결 프로필로 전환합니다.
+ *
+ * 반환값:
+ * - 원래 프로필 이름
+ * - 전환 대상 프로필 이름
+ * - 실제 전환 여부
+ *
+ * 프로필 이름이 비어 있으면 아무것도 전환하지 않습니다.
+ */
+async function switchToGhostwriterProfile() {
+  const profileName = getSettings().profileName.trim();
+
+  if (!profileName) {
+    return {
+      originalProfileName: '',
+      targetProfileName: '',
+      switched: false
+    };
+  }
+
+  const originalProfileName = await getCurrentConnectionProfileName();
+
+  if (originalProfileName && originalProfileName === profileName) {
+    return {
+      originalProfileName,
+      targetProfileName: profileName,
+      switched: false
+    };
+  }
+
+  await switchConnectionProfile(profileName);
+
+  return {
+    originalProfileName,
+    targetProfileName: profileName,
+    switched: true
+  };
+}
+
+/**
+ * 대필 실행 전 프로필을 바꿨다면, 실행 후 원래 프로필로 복귀합니다.
+ */
+async function restoreConnectionProfile(profileState) {
+  if (!profileState?.switched || !profileState.originalProfileName) {
+    return;
+  }
+
+  await switchConnectionProfile(profileState.originalProfileName);
 }
 
 /**
@@ -480,12 +661,15 @@ async function rewriteCurrentInput() {
   }
 
   const button = document.querySelector(`#${EXTENSION_NAME}-button`);
+  let profileState = null;
 
   try {
     isGenerating = true;
     button?.classList.add('ghostwriter-working');
     button?.setAttribute('disabled', 'disabled');
     setButtonIcon(button, true);
+
+    profileState = await switchToGhostwriterProfile();
 
     const rewrittenText = await context.generateRaw({
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
@@ -505,6 +689,13 @@ async function rewriteCurrentInput() {
     console.error(`[${EXTENSION_NAME}] rewrite failed`, error);
     toastr?.error?.('대필 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
   } finally {
+    try {
+      await restoreConnectionProfile(profileState);
+    } catch (error) {
+      console.error(`[${EXTENSION_NAME}] profile restore failed`, error);
+      toastr?.warning?.('원래 연결 프로필로 복귀하지 못했어요.');
+    }
+
     isGenerating = false;
     button?.classList.remove('ghostwriter-working');
     button?.removeAttribute('disabled');
@@ -567,17 +758,42 @@ function insertSettingsPanel() {
     return;
   }
 
+  const settings = getSettings();
   const panel = document.createElement('div');
   panel.id = `${EXTENSION_NAME}-settings`;
   panel.className = 'ghostwriter-settings';
   panel.innerHTML = `
-    <div class="ghostwriter-settings-title">ghostwriter</div>
-    <div class="ghostwriter-settings-body">
-      현재 입력창의 초안을 유저 시점 3인칭 문장으로 대필하고, 채팅별 최신 기록을 입력창 위에 보여줘요.
+    <div class="inline-drawer">
+      <div class="inline-drawer-toggle inline-drawer-header">
+        <b>ghostwriter</b>
+        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+      </div>
+      <div class="inline-drawer-content">
+        <label class="ghostwriter-settings-field" for="${EXTENSION_NAME}-profile-name">
+          <span>대필용 연결 프로필(API)</span>
+          <input
+            id="${EXTENSION_NAME}-profile-name"
+            class="text_pole"
+            type="text"
+            placeholder="비워두면 현재 연결 사용"
+            value=""
+          />
+        </label>
+        <div class="ghostwriter-settings-hint">
+          입력한 프로필 이름으로 전환해 대필한 뒤, 원래 연결 프로필로 복귀해요. 저장 개수는 최신 3개로 고정돼요.
+        </div>
+      </div>
     </div>
   `;
 
   settingsRoot.appendChild(panel);
+
+  const profileInput = panel.querySelector(`#${EXTENSION_NAME}-profile-name`);
+  profileInput.value = settings.profileName || '';
+  profileInput.addEventListener('input', () => {
+    getSettings().profileName = profileInput.value.trim();
+    saveSettings();
+  });
 }
 
 /**

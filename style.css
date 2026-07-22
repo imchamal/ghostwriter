@@ -51,22 +51,19 @@
 
 .ghostwriter-settings {
   margin: 10px 0;
-  padding: 12px;
-  border: 1px solid var(--SmartThemeBorderColor, rgba(0, 0, 0, 0.14));
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.94);
   color: var(--SmartThemeBodyColor, #222);
 }
 
-.ghostwriter-settings-title {
-  margin-bottom: 6px;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0;
+.ghostwriter-settings-field {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+  font-size: 13px;
 }
 
-.ghostwriter-settings-body {
-  font-size: 13px;
+.ghostwriter-settings-hint {
+  margin-top: 6px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--SmartThemeEmColor, inherit);
 }
