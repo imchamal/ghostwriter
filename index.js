@@ -927,12 +927,13 @@ function renderHistoryPanel() {
     time.className = 'ghostwriter-history-time';
     time.textContent = formatHistoryTime(item.createdAt);
 
-    const rewritten = document.createElement('button');
-    rewritten.type = 'button';
+    // [히스토리 미리보기]
+    // 예전에는 이 영역을 누르면 바로 입력창에 적용했지만,
+    // 실수 클릭이 잦아서 이제는 읽기 전용 미리보기 텍스트로만 사용합니다.
+    const rewritten = document.createElement('div');
     rewritten.className = 'ghostwriter-history-rewritten';
-    rewritten.dataset.ghostwriterHistoryApply = item.id;
     rewritten.textContent = item.rewritten;
-    rewritten.title = '이 대필 결과를 입력창에 다시 적용합니다.';
+    rewritten.title = '대필 결과 미리보기입니다. 펼친 뒤 키보드 아이콘을 눌러 입력창에 적용합니다.';
 
     const translate = document.createElement('button');
     translate.type = 'button';
@@ -946,6 +947,17 @@ function renderHistoryPanel() {
       translate.hidden = true;
     }
 
+    // [입력창 적용 버튼]
+    // 히스토리 항목을 펼친 상태에서만 보이는 전용 버튼입니다.
+    // 이 버튼을 눌렀을 때만 저장된 대필 결과를 입력창에 다시 넣습니다.
+    const apply = document.createElement('button');
+    apply.type = 'button';
+    apply.className = 'ghostwriter-history-apply';
+    apply.dataset.ghostwriterHistoryApply = item.id;
+    apply.innerHTML = '<i class="fa-solid fa-keyboard" aria-hidden="true"></i>';
+    apply.title = '이 대필 결과를 입력창에 적용합니다.';
+    apply.setAttribute('aria-label', '입력창에 적용');
+
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'ghostwriter-history-toggle';
@@ -956,7 +968,7 @@ function renderHistoryPanel() {
 
     const itemActions = document.createElement('div');
     itemActions.className = 'ghostwriter-history-item-actions';
-    itemActions.append(translate, toggle);
+    itemActions.append(translate, apply, toggle);
 
     const detail = document.createElement('div');
     detail.className = 'ghostwriter-history-detail';
@@ -1121,7 +1133,7 @@ async function rewriteLatestOriginal() {
  * 동작:
  * - 닫기: 패널을 숨기고 현재 채팅에 닫힘 상태를 저장합니다.
  * - 토글 아이콘: 한 줄로 줄인 대필 결과를 전체 문장으로 펼치거나 접습니다.
- * - 대필 기록 클릭: 해당 결과를 입력창에 다시 적용합니다.
+ * - 적용 아이콘: 펼친 항목의 대필 결과를 입력창에 다시 적용합니다.
  */
 async function handleHistoryPanelClick(event) {
   const closeButton = event.target.closest('[data-ghostwriter-history-close]');
@@ -1164,7 +1176,6 @@ async function handleHistoryPanelClick(event) {
 
   if (toggleButton) {
     const row = toggleButton.closest('[data-ghostwriter-history-id]');
-    const rewritten = row?.querySelector('[data-ghostwriter-history-apply]');
     const isExpanded = row?.classList.toggle('ghostwriter-history-item-expanded');
 
     toggleButton.innerHTML = isExpanded
@@ -1172,7 +1183,6 @@ async function handleHistoryPanelClick(event) {
       : '<i class="fa-solid fa-angle-down" aria-hidden="true"></i>';
     toggleButton.setAttribute('aria-label', isExpanded ? '대필 결과 접기' : '대필 결과 전체보기');
     toggleButton.setAttribute('aria-expanded', String(Boolean(isExpanded)));
-    rewritten?.focus();
     return;
   }
 
@@ -1325,8 +1335,14 @@ function insertGhostwriterButton() {
   button.addEventListener('click', rewriteCurrentInput);
   setButtonIcon(button);
 
-  if (sendButton?.nextSibling) {
-    container.insertBefore(button, sendButton.nextSibling);
+  if (sendButton) {
+    /*
+     * [전송 버튼 옆 배치]
+     * 전송 버튼은 하단 툴바의 오른쪽 끝 기준점인 경우가 많습니다.
+     * 버튼을 sendButton 뒤에 붙이면 레이아웃에 따라 줄 끝/정렬 기준이 달라질 수 있어서,
+     * 실제 화면에서는 전송 버튼 바로 왼쪽에 오도록 sendButton 직전에 삽입합니다.
+     */
+    container.insertBefore(button, sendButton);
   } else {
     container.appendChild(button);
   }

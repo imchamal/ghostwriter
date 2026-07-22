@@ -8,11 +8,12 @@
  */
 
 .ghostwriter-button {
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  min-height: 30px;
-  padding: 0;
+  /*
+   * [하단 툴바 정렬]
+   * SillyTavern의 하단 버튼들은 .menu_button 쪽에서 크기, 여백, 정렬을 이미 받습니다.
+   * 여기서 width/height/padding을 고정하면 전송 버튼 및 다른 확장 버튼들과 기준선이 어긋날 수 있으므로,
+   * 버튼 박스는 원래 툴바 규칙을 따르고 ghostwriter는 아이콘 표현만 조정합니다.
+   */
   border: 0;
   border-radius: 0;
   background: transparent !important;
@@ -20,15 +21,31 @@
   font-size: 17px;
   font-weight: 500;
   letter-spacing: 0;
-  line-height: 1;
+  line-height: inherit;
   box-shadow: none;
-  display: inline-flex;
+  display: inline-flex !important;
   align-items: center;
   justify-content: center;
+  align-self: center;
+  vertical-align: middle;
+  margin-top: 0;
+  margin-bottom: 0;
   transition:
     color 120ms ease,
     opacity 120ms ease,
     transform 120ms ease;
+}
+
+.ghostwriter-button i {
+  /*
+   * Font Awesome 아이콘은 글꼴 기준선 때문에 버튼 안에서 미세하게 위아래가 달라 보일 수 있습니다.
+   * 아이콘 자체도 flex로 가운데 정렬해서 emoji/기본 아이콘 버튼과 시각 중심을 맞춥니다.
+   */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
 }
 
 .ghostwriter-button:hover {
@@ -258,24 +275,14 @@
 .ghostwriter-history-rewritten {
   grid-column: 2;
   min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
   color: var(--SmartThemeBodyColor, #222);
-  font-family: inherit;
   font-size: 13px;
   font-weight: 600;
   line-height: 1.4;
-  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   letter-spacing: 0;
-  cursor: pointer;
-}
-
-.ghostwriter-history-rewritten:hover {
-  color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
 }
 
 .ghostwriter-history-item-actions {
@@ -287,7 +294,8 @@
 }
 
 .ghostwriter-history-toggle,
-.ghostwriter-history-translate {
+.ghostwriter-history-translate,
+.ghostwriter-history-apply {
   width: 24px;
   min-width: 24px;
   height: 24px;
@@ -308,16 +316,19 @@
 }
 
 .ghostwriter-history-toggle:hover,
-.ghostwriter-history-translate:hover {
+.ghostwriter-history-translate:hover,
+.ghostwriter-history-apply:hover {
   background: transparent;
   color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
 }
 
-.ghostwriter-history-translate {
+.ghostwriter-history-translate,
+.ghostwriter-history-apply {
   display: none;
 }
 
-.ghostwriter-history-item-expanded .ghostwriter-history-translate:not([hidden]) {
+.ghostwriter-history-item-expanded .ghostwriter-history-translate:not([hidden]),
+.ghostwriter-history-item-expanded .ghostwriter-history-apply {
   display: inline-flex;
 }
 
@@ -379,7 +390,8 @@
   }
 
   .ghostwriter-history-toggle,
-  .ghostwriter-history-translate {
+  .ghostwriter-history-translate,
+  .ghostwriter-history-apply {
     width: 23px;
     min-width: 23px;
     height: 23px;
