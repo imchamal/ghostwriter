@@ -872,9 +872,8 @@ function insertHistoryPanel() {
         <span>ghostwriter</span>
       </div>
       <div class="ghostwriter-history-tools">
-        <div class="ghostwriter-history-count" data-ghostwriter-history-count>최근 대필 0개</div>
         <button type="button" class="ghostwriter-history-reroll" data-ghostwriter-reroll-latest="true" aria-label="직전 입력 재대필" title="직전 입력을 현재 설정으로 다시 대필합니다.">
-          <i class="fa-solid fa-person-praying" aria-hidden="true"></i>
+          <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
         </button>
         <button type="button" class="ghostwriter-history-close" data-ghostwriter-history-close="true" aria-label="대필 기록 패널 닫기">
           <i class="fa-solid fa-xmark" aria-hidden="true"></i>
@@ -899,16 +898,14 @@ function renderHistoryPanel() {
 
   const panel = document.querySelector(`#${EXTENSION_NAME}-history`);
   const list = panel?.querySelector('[data-ghostwriter-history-list]');
-  const count = panel?.querySelector('[data-ghostwriter-history-count]');
 
-  if (!panel || !list || !count) {
+  if (!panel || !list) {
     return;
   }
 
   const history = loadHistory();
   lastRenderedChatKey = getCurrentChatKey();
   isHistoryPanelClosed = loadHistoryPanelClosed();
-  count.textContent = `최근 대필 ${history.length}개`;
   list.innerHTML = '';
 
   if (!history.length || isHistoryPanelClosed) {
@@ -976,24 +973,31 @@ function renderHistoryPanel() {
 }
 
 /**
- * 고스트 버튼의 작업 중 상태를 켜고 끕니다.
+ * 버튼 하나의 작업 중 상태를 켜고 끕니다.
  *
- * 현재 입력창 대필뿐 아니라 히스토리 번역/재대필도 같은 생성 API를 쓰므로,
- * 모두 같은 버튼 애니메이션으로 진행 상태를 표시합니다.
+ * 일반 대필은 고스트 버튼을 움직이고,
+ * 직전 입력 재대필은 상단 재대필 버튼을 움직이기 위해 공통 helper로 분리했습니다.
  */
-function setGhostButtonWorking(isWorking) {
-  const button = document.querySelector(`#${EXTENSION_NAME}-button`);
-
-  if (isWorking) {
-    button?.classList.add('ghostwriter-working');
-    button?.setAttribute('disabled', 'disabled');
-    setButtonIcon(button, true);
+function setButtonWorking(button, isWorking) {
+  if (!button) {
     return;
   }
 
-  button?.classList.remove('ghostwriter-working');
-  button?.removeAttribute('disabled');
-  setButtonIcon(button);
+  if (isWorking) {
+    button.classList.add('ghostwriter-working');
+    button.setAttribute('disabled', 'disabled');
+    return;
+  }
+
+  button.classList.remove('ghostwriter-working');
+  button.removeAttribute('disabled');
+}
+
+/**
+ * 메인 고스트 버튼의 작업 중 상태를 켜고 끕니다.
+ */
+function setGhostButtonWorking(isWorking) {
+  setButtonWorking(document.querySelector(`#${EXTENSION_NAME}-button`), isWorking);
 }
 
 /**
@@ -1136,7 +1140,7 @@ async function handleHistoryPanelClick(event) {
 
     try {
       isGenerating = true;
-      setGhostButtonWorking(true);
+      setButtonWorking(rerollLatestButton, true);
       await rewriteLatestOriginal();
     } catch (error) {
       console.error(`[${EXTENSION_NAME}] latest rewrite failed`, error);
@@ -1148,7 +1152,7 @@ async function handleHistoryPanelClick(event) {
       }
     } finally {
       isGenerating = false;
-      setGhostButtonWorking(false);
+      setButtonWorking(rerollLatestButton, false);
     }
 
     return;
@@ -1175,7 +1179,7 @@ async function handleHistoryPanelClick(event) {
 
     try {
       isGenerating = true;
-      setGhostButtonWorking(true);
+      setButtonWorking(translateButton, true);
       await translateHistoryItem(translateButton.dataset.ghostwriterHistoryTranslate);
     } catch (error) {
       console.error(`[${EXTENSION_NAME}] history action failed`, error);
@@ -1187,7 +1191,7 @@ async function handleHistoryPanelClick(event) {
       }
     } finally {
       isGenerating = false;
-      setGhostButtonWorking(false);
+      setButtonWorking(translateButton, false);
     }
 
     return;
@@ -1257,9 +1261,7 @@ async function rewriteCurrentInput() {
 
   try {
     isGenerating = true;
-    button?.classList.add('ghostwriter-working');
-    button?.setAttribute('disabled', 'disabled');
-    setButtonIcon(button, true);
+    setButtonWorking(button, true);
 
     const rewrittenText = await runWithGhostwriterProfile(() => context.generateRaw({
       systemPrompt: buildSystemPrompt(),
@@ -1285,9 +1287,7 @@ async function rewriteCurrentInput() {
     }
   } finally {
     isGenerating = false;
-    button?.classList.remove('ghostwriter-working');
-    button?.removeAttribute('disabled');
-    setButtonIcon(button);
+    setButtonWorking(button, false);
   }
 }
 

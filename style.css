@@ -43,12 +43,18 @@
 }
 
 .ghostwriter-button:disabled,
-.ghostwriter-button.ghostwriter-working {
+.ghostwriter-button.ghostwriter-working,
+.ghostwriter-history-reroll:disabled,
+.ghostwriter-history-reroll.ghostwriter-working,
+.ghostwriter-history-translate:disabled,
+.ghostwriter-history-translate.ghostwriter-working {
   cursor: wait;
   opacity: 0.72;
 }
 
-.ghostwriter-button.ghostwriter-working i {
+.ghostwriter-button.ghostwriter-working i,
+.ghostwriter-history-reroll.ghostwriter-working i,
+.ghostwriter-history-translate.ghostwriter-working i {
   animation: ghostwriter-pulse 780ms ease-in-out infinite;
 }
 
@@ -138,14 +144,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 6px;
 }
 
 .ghostwriter-history-title {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
   font-size: 13px;
   font-weight: 700;
@@ -156,16 +162,10 @@
   font-size: 13px;
 }
 
-.ghostwriter-history-count {
-  flex: 0 0 auto;
-  font-size: 12px;
-  color: var(--SmartThemeEmColor, inherit);
-}
-
 .ghostwriter-history-tools {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 0 0 auto;
 }
 
@@ -196,7 +196,33 @@
   display: grid;
   gap: 5px;
   max-height: 205px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  margin-right: -5px;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.ghostwriter-history-list:hover {
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.ghostwriter-history-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.ghostwriter-history-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ghostwriter-history-list::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.ghostwriter-history-list:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
 }
 
 .ghostwriter-history-item {
@@ -282,15 +308,15 @@
 
 .ghostwriter-history-translate {
   grid-column: 3;
-  visibility: hidden;
+  display: none;
 }
 
 .ghostwriter-history-item-expanded .ghostwriter-history-translate:not([hidden]) {
-  visibility: visible;
+  display: inline-flex;
 }
 
 .ghostwriter-history-item-expanded .ghostwriter-history-rewritten {
-  visibility: hidden;
+  display: none;
 }
 
 .ghostwriter-history-detail {
