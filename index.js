@@ -312,6 +312,43 @@ function setButtonIcon(button, isWorking = false) {
 }
 
 /**
+ * 전송 버튼의 실제 화면 스타일을 고스트 버튼에 복사합니다.
+ *
+ * 왜 필요한가:
+ * - color: inherit는 형제 요소인 전송 버튼의 색을 가져오지 못합니다.
+ * - SillyTavern 테마/확장에 따라 #send_but의 color, font-size, opacity가 달라질 수 있습니다.
+ * - 그래서 CSS 변수 추측 대신 getComputedStyle()로 전송 버튼의 최종 계산값을 읽어옵니다.
+ *
+ * 복사하는 값:
+ * - color: 아이콘 색상
+ * - fontSize: 아이콘 시각 크기
+ * - opacity: 하단 버튼의 흐림 정도
+ *
+ * width/height는 복사하지 않습니다.
+ * 버튼 박스 크기까지 강제로 복사하면 <div id="send_but">와 <button>의 박스 모델 차이 때문에
+ * 정렬이 다시 어긋날 수 있어서, 여기서는 아이콘 표현값만 맞춥니다.
+ */
+function syncGhostwriterButtonWithSendButton() {
+  const button = document.querySelector(`#${EXTENSION_NAME}-button`);
+  const icon = button?.querySelector('i');
+  const sendButton = document.querySelector('#send_but, #send_button, #send');
+
+  if (!button || !sendButton) {
+    return;
+  }
+
+  const sendStyle = getComputedStyle(sendButton);
+  button.style.color = sendStyle.color;
+  button.style.fontSize = sendStyle.fontSize;
+  button.style.opacity = sendStyle.opacity;
+
+  if (icon) {
+    icon.style.color = sendStyle.color;
+    icon.style.fontSize = sendStyle.fontSize;
+  }
+}
+
+/**
  * SillyTavern 확장 API를 가져옵니다.
  *
  * SillyTavern은 확장에 getContext()를 제공하며,
@@ -1580,6 +1617,8 @@ function watchChatKeyChanges() {
     const currentChatKey = getCurrentChatKey();
     const currentStyleControlsKey = getStyleControlsStorageKey();
 
+    syncGhostwriterButtonWithSendButton();
+
     if (currentChatKey !== lastRenderedChatKey) {
       isHistoryPanelClosed = loadHistoryPanelClosed();
       renderHistoryPanel();
@@ -1692,6 +1731,9 @@ function insertGhostwriterButton() {
   } else {
     container.appendChild(button);
   }
+
+  syncGhostwriterButtonWithSendButton();
+  requestAnimationFrame(syncGhostwriterButtonWithSendButton);
 }
 
 /**
