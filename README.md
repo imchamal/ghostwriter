@@ -6,7 +6,8 @@ SillyTavern 입력창의 유저 초안을 버튼 한 번으로 "유저 시점의
 
 - 입력창(`#send_textarea`)의 현재 내용을 읽습니다.
 - SillyTavern에서 현재 활성화된 API 연결을 그대로 사용합니다.
-- 원문 의도, 행동, 감정은 유지하고 3인칭 문장으로 다시 씁니다.
+- 원문 의도, 행동, 감정은 유지하고 유저가 조종하는 인물의 3인칭 문장으로 다시 씁니다.
+- 원문에 없는 캐릭터 이름을 새로 만들거나 현재 채팅 캐릭터 이름을 가져오지 않도록 지시합니다.
 - 결과는 바로 전송하지 않고 입력창에만 반영합니다.
 
 ## 파일 구조
@@ -31,7 +32,7 @@ SillyTavern/public/scripts/extensions/third-party/ghostwriter
 
 `index.js`의 `DEFAULT_SYSTEM_PROMPT`를 바꾸면 대필 규칙을 바꿀 수 있습니다.
 
-`index.js`의 `BUTTON_LABEL`을 바꾸면 버튼 이름을 바꿀 수 있습니다.
+`index.js`의 `setButtonIcon()`을 바꾸면 버튼 아이콘을 바꿀 수 있습니다.
 
 `style.css`의 `.ghostwriter-button`을 바꾸면 버튼 모양을 조정할 수 있습니다.
 

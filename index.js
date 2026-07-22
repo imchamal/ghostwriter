@@ -6,7 +6,7 @@
  *
  * 이 파일에서 초보자가 주로 수정하게 될 부분:
  * 1. DEFAULT_SYSTEM_PROMPT: 대필 규칙을 바꾸는 곳
- * 2. BUTTON_LABEL: 버튼에 보이는 이름을 바꾸는 곳
+ * 2. setButtonIcon(): 버튼에 보이는 아이콘을 바꾸는 곳
  * 3. insertGhostwriterButton(): 버튼을 어디에 붙일지 조정하는 곳
  */
 
@@ -14,24 +14,46 @@
 // HTML id/class 이름을 만들 때 충돌을 줄이기 위해 사용합니다.
 const EXTENSION_NAME = 'ghostwriter';
 
-// 버튼에 표시될 문구입니다.
-// 너무 길면 입력창 주변 UI가 좁아질 수 있으니 짧게 유지하는 편이 좋습니다.
-const BUTTON_LABEL = '3인칭 대필';
-
 // 모델에게 전달할 기본 대필 지시문입니다.
-// 핵심은 "이어쓰기"가 아니라 "유저가 쓴 문장을 3인칭으로 고쳐쓰기"라는 점입니다.
+// 핵심:
+// 1. "대화상대/캐릭터"가 아니라 "유저가 조종하는 인물"의 행동으로 써야 합니다.
+// 2. 원문에 없는 이름을 새로 만들거나 현재 캐릭터 이름을 가져오면 안 됩니다.
+// 3. 이어쓰기가 아니라 원문만 고쳐쓰기입니다.
 const DEFAULT_SYSTEM_PROMPT = [
-  'You rewrite the user roleplay input into natural third-person prose from the user character perspective.',
-  'Keep the original intent, actions, emotion, and meaning.',
-  'Use third-person narration for the user character.',
+  'You are a roleplay ghostwriter.',
+  'Rewrite ONLY the human user input into polished third-person prose.',
+  'The acting subject is the human user persona, not the assistant character, not the current chat character, and not {{char}}.',
+  'Never use the current character name unless that exact name appears in the original input.',
+  'Never invent a character name.',
+  'If the original input has no user persona name, use a neutral third-person subject such as "그", "그녀", or a natural omitted subject in Korean.',
+  'Preserve the original intent, actions, emotion, and meaning.',
   'Do not continue the story.',
   'Do not add new events, dialogue, thoughts, or facts.',
-  'Return only the rewritten text.'
+  'Return only the rewritten Korean text.'
 ].join('\n');
 
 // 생성 중복 실행을 막기 위한 상태값입니다.
 // 버튼을 빠르게 여러 번 눌러도 요청이 겹치지 않도록 합니다.
 let isGenerating = false;
+
+/**
+ * 버튼 안의 아이콘을 설정합니다.
+ *
+ * 기본 아이콘:
+ * <i class="fa-solid fa-ghost"></i>
+ *
+ * SillyTavern은 Font Awesome을 이미 쓰는 경우가 많아서,
+ * 여기서는 별도 이미지 파일 없이 Font Awesome class만 사용합니다.
+ */
+function setButtonIcon(button, isWorking = false) {
+  if (!button) {
+    return;
+  }
+
+  button.innerHTML = isWorking
+    ? '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>'
+    : '<i class="fa-solid fa-ghost" aria-hidden="true"></i>';
+}
 
 /**
  * SillyTavern 확장 API를 가져옵니다.
@@ -88,9 +110,12 @@ function setInputTextareaValue(text) {
  */
 function buildRewritePrompt(originalText) {
   return [
-    'Rewrite the following user-written roleplay input in third person.',
+    '다음 문장은 사람이 직접 입력한 RP 초안입니다.',
+    '이 문장을 "유저가 조종하는 인물"의 행동으로만 3인칭 대필하세요.',
+    '현재 채팅의 캐릭터 이름이나 상대 캐릭터 이름을 주어로 쓰지 마세요.',
+    '원문에 이름이 없으면 이름을 만들지 말고 자연스러운 3인칭 한국어 문장으로 쓰세요.',
     '',
-    'Original input:',
+    '원문:',
     originalText
   ].join('\n');
 }
@@ -127,7 +152,7 @@ async function rewriteCurrentInput() {
     isGenerating = true;
     button?.classList.add('ghostwriter-working');
     button?.setAttribute('disabled', 'disabled');
-    button && (button.textContent = '대필 중...');
+    setButtonIcon(button, true);
 
     const rewrittenText = await context.generateRaw({
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
@@ -148,25 +173,28 @@ async function rewriteCurrentInput() {
     isGenerating = false;
     button?.classList.remove('ghostwriter-working');
     button?.removeAttribute('disabled');
-    button && (button.textContent = BUTTON_LABEL);
+    setButtonIcon(button);
   }
 }
 
 /**
  * 입력창 주변에 ghostwriter 버튼을 추가합니다.
  *
- * 우선 #send_form 안에 버튼을 붙입니다.
- * 설치 후 위치가 마음에 들지 않으면 이 함수의 container selector를 바꾸면 됩니다.
+ * 목표 위치는 "전송 버튼 옆"입니다.
+ * SillyTavern 버전에 따라 전송 버튼 id가 조금 다를 수 있어서,
+ * 자주 쓰이는 selector들을 순서대로 찾아보고 가장 먼저 발견되는 버튼 옆에 붙입니다.
  */
 function insertGhostwriterButton() {
   if (document.querySelector(`#${EXTENSION_NAME}-button`)) {
     return;
   }
 
-  const container = document.querySelector('#send_form');
+  const sendButton = document.querySelector('#send_but, #send_button, #send');
+  const fallbackContainer = document.querySelector('#send_form');
+  const container = sendButton?.parentElement || fallbackContainer;
 
   if (!container) {
-    console.warn(`[${EXTENSION_NAME}] #send_form not found`);
+    console.warn(`[${EXTENSION_NAME}] send button container not found`);
     return;
   }
 
@@ -174,11 +202,16 @@ function insertGhostwriterButton() {
   button.id = `${EXTENSION_NAME}-button`;
   button.type = 'button';
   button.className = 'menu_button ghostwriter-button';
-  button.textContent = BUTTON_LABEL;
   button.title = '입력창 내용을 유저 시점의 3인칭 문장으로 대필합니다.';
+  button.setAttribute('aria-label', '유저 시점 3인칭 대필');
   button.addEventListener('click', rewriteCurrentInput);
+  setButtonIcon(button);
 
-  container.appendChild(button);
+  if (sendButton?.nextSibling) {
+    container.insertBefore(button, sendButton.nextSibling);
+  } else {
+    container.appendChild(button);
+  }
 }
 
 /**
