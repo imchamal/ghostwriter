@@ -49,6 +49,21 @@
   opacity: 0.72;
 }
 
+.ghostwriter-button.ghostwriter-working i {
+  animation: ghostwriter-pulse 780ms ease-in-out infinite;
+}
+
+@keyframes ghostwriter-pulse {
+  0%,
+  100% {
+    transform: scale(0.92);
+  }
+
+  50% {
+    transform: scale(1.22);
+  }
+}
+
 .ghostwriter-settings {
   margin: 10px 0;
   color: var(--SmartThemeBodyColor, #222);

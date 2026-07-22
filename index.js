@@ -6,7 +6,7 @@
  *
  * 이 파일에서 초보자가 주로 수정하게 될 부분:
  * 1. DEFAULT_SYSTEM_PROMPT: 절대 깨지면 안 되는 기본 대필 규칙
- * 2. TONE_PRESETS / LANGUAGE_PRESETS / LENGTH_PRESETS: 설정에서 고르는 옵션
+ * 2. TONE_PRESETS / LANGUAGE_PRESETS / LENGTH_PRESETS / CONTEXT_PRESETS: 설정에서 고르는 옵션
  * 3. setButtonIcon(): 버튼에 보이는 아이콘
  * 4. insertGhostwriterButton(): 버튼 위치
  */
@@ -54,8 +54,11 @@ const DEFAULT_SYSTEM_PROMPT = [
   '- If writing in Korean, use natural Korean past-tense endings.',
   '- If writing in English, use natural English past tense.',
   '- Do not continue the scene.',
-  '- Do not add new events, dialogue, backstory, thoughts, or facts.',
+  '- Do not add new events, backstory, thoughts, or facts.',
+  '- Do not add dialogue unless a later length preset explicitly allows brief situation-appropriate dialogue.',
   '- Do not answer as {{char}} or <BOT>.',
+  '- Recent chat context is reference-only. Use it only to understand the scene, relationship, mood, and continuity.',
+  '- Never copy, rewrite, answer, or continue recent context messages.',
   '- Return only the rewritten text, with no labels, notes, or explanations.'
 ].join('\n');
 
@@ -98,19 +101,50 @@ const LANGUAGE_PRESETS = {
 };
 
 // 길이 프리셋입니다.
-// "길게"도 새 사건이나 새 사실을 추가하는 뜻이 아니라, 표현 밀도를 조금 높이는 뜻입니다.
+// 짧게/보통/길게가 체감상 확실히 다르도록 문장 수와 확장 범위를 명확히 나눕니다.
 const LENGTH_PRESETS = {
   short: {
     label: '짧게',
-    prompt: 'Keep the rewrite short and compact. Do not expand details.'
+    prompt: 'Write 1-2 sentences. Keep the rewrite naturally sized and close to the original input.'
   },
   medium: {
     label: '보통',
-    prompt: 'Keep the rewrite naturally sized and close to the original input.'
+    prompt: 'Write 2-4 sentences. Slightly enrich the prose with natural expression, body language, and sensory detail, but do not add new events or facts.'
   },
   long: {
     label: '길게',
-    prompt: 'Slightly enrich the prose with natural detail, but do not add new events, facts, or dialogue.'
+    prompt: 'Write 4-7 sentences. Enrich the prose with natural expression, body language, sensory detail, and emotional nuance. You may add brief dialogue only when it naturally fits the current situation and the user input, but do not add new events, new facts, backstory, or unrelated information.'
+  }
+};
+
+// 최신 메시지 참고 범위 프리셋입니다.
+// count는 <RECENT_CONTEXT>에 넣을 최근 채팅 메시지 개수입니다.
+// 너무 많이 넣으면 모델이 대필이 아니라 이어쓰기를 하려는 경향이 생길 수 있어 최대 10개로 제한합니다.
+const CONTEXT_PRESETS = {
+  none: {
+    label: '참고 안 함',
+    count: 0,
+    prompt: 'Do not use recent chat context.'
+  },
+  low: {
+    label: '적게',
+    count: 2,
+    prompt: 'Use only the last 2 chat messages as reference context.'
+  },
+  normal: {
+    label: '기본',
+    count: 4,
+    prompt: 'Use the last 4 chat messages as reference context.'
+  },
+  high: {
+    label: '많게',
+    count: 6,
+    prompt: 'Use the last 6 chat messages as reference context.'
+  },
+  max: {
+    label: '최대',
+    count: 10,
+    prompt: 'Use the last 10 chat messages as reference context, but still rewrite only <USER_INPUT>.'
   }
 };
 
@@ -127,11 +161,13 @@ const MAX_HISTORY_ITEMS = 3;
 // tonePreset: 대필 문체를 고르는 값입니다.
 // outputLanguage: 결과 언어를 고르는 값입니다.
 // lengthPreset: 결과 길이를 고르는 값입니다.
+// contextPreset: 최신 메시지를 몇 개 참고할지 고르는 값입니다.
 const DEFAULT_SETTINGS = {
   profileName: '',
   tonePreset: 'balanced',
   outputLanguage: 'ko',
-  lengthPreset: 'medium'
+  lengthPreset: 'medium',
+  contextPreset: 'normal'
 };
 
 // 마지막으로 패널을 그린 채팅 키입니다.
@@ -192,9 +228,7 @@ function setButtonIcon(button, isWorking = false) {
     return;
   }
 
-  button.innerHTML = isWorking
-    ? '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>'
-    : '<i class="fa-solid fa-ghost" aria-hidden="true"></i>';
+  button.innerHTML = '<i class="fa-solid fa-ghost" aria-hidden="true"></i>';
 }
 
 /**
@@ -357,6 +391,18 @@ async function switchConnectionProfile(profileName) {
 }
 
 /**
+ * 연결 프로필 전환 실패를 구분하기 위한 전용 오류를 만듭니다.
+ *
+ * 일반 대필 실패와 프로필 전환 실패는 사용자가 해야 할 조치가 다르므로,
+ * 오류 코드로 나눠서 메시지를 다르게 보여줍니다.
+ */
+function createProfileError(message) {
+  const error = new Error(message);
+  error.name = 'GhostwriterProfileError';
+  return error;
+}
+
+/**
  * 설정된 대필용 연결 프로필로 전환합니다.
  *
  * 반환값:
@@ -377,7 +423,13 @@ async function switchToGhostwriterProfile() {
     };
   }
 
-  const originalProfileName = await getCurrentConnectionProfileName();
+  let originalProfileName = '';
+
+  try {
+    originalProfileName = await getCurrentConnectionProfileName();
+  } catch (error) {
+    throw createProfileError(`현재 연결 프로필을 확인하지 못했어요. Connection Profiles가 활성화되어 있는지 확인해 주세요.`);
+  }
 
   if (originalProfileName && originalProfileName === profileName) {
     return {
@@ -387,7 +439,11 @@ async function switchToGhostwriterProfile() {
     };
   }
 
-  await switchConnectionProfile(profileName);
+  try {
+    await switchConnectionProfile(profileName);
+  } catch (error) {
+    throw createProfileError(`대필용 연결 프로필 "${profileName}"로 전환하지 못했어요. 프로필이 존재하는지 확인해 주세요.`);
+  }
 
   return {
     originalProfileName,
@@ -550,6 +606,69 @@ function getPresetValue(presets, presetKey, fallbackKey) {
 }
 
 /**
+ * SillyTavern 채팅 메시지에서 화면에 넣을 텍스트만 꺼냅니다.
+ *
+ * SillyTavern 메시지 객체는 버전/상황에 따라 필드가 조금 다를 수 있습니다.
+ * 그래서 mes, message, text 후보를 순서대로 확인합니다.
+ */
+function getChatMessageText(message) {
+  const text = message?.mes ?? message?.message ?? message?.text ?? '';
+  return String(text).replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * SillyTavern 채팅 메시지의 말한 주체를 <USER>/<BOT> 태그로 단순화합니다.
+ *
+ * 실제 이름을 그대로 많이 넣으면 모델이 그 이름을 주어로 오염시킬 수 있으므로,
+ * 대필 대상 구분에 필요한 최소 태그만 사용합니다.
+ */
+function getChatMessageRole(message) {
+  if (message?.is_user || message?.isUser) {
+    return '<USER>';
+  }
+
+  return '<BOT>';
+}
+
+/**
+ * 현재 채팅에서 최신 메시지를 참고용 텍스트로 추출합니다.
+ *
+ * 중요한 제한:
+ * - 현재 입력창 원문은 아직 채팅에 전송된 메시지가 아니므로 여기에는 들어가지 않습니다.
+ * - 최근 메시지는 참고용이며, 실제 rewrite 대상은 buildRewritePrompt()의 <USER_INPUT>입니다.
+ */
+function getRecentContextText() {
+  const settings = getSettings();
+  const contextPreset = getPresetValue(CONTEXT_PRESETS, settings.contextPreset, DEFAULT_SETTINGS.contextPreset);
+  const messageCount = contextPreset.count;
+
+  if (!messageCount) {
+    return '';
+  }
+
+  const context = getSillyTavernContext();
+  const chat = Array.isArray(context?.chat) ? context.chat : [];
+
+  if (!chat.length) {
+    return '';
+  }
+
+  return chat
+    .slice(-messageCount)
+    .map((message) => {
+      const text = getChatMessageText(message);
+
+      if (!text) {
+        return '';
+      }
+
+      return `${getChatMessageRole(message)} ${text}`;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
  * 실제 생성에 사용할 system prompt를 조립합니다.
  *
  * 구조:
@@ -557,6 +676,7 @@ function getPresetValue(presets, presetKey, fallbackKey) {
  * 2. TONE PRESET: 설정에서 고른 문체
  * 3. LANGUAGE PRESET: 설정에서 고른 출력 언어
  * 4. LENGTH PRESET: 설정에서 고른 길이
+ * 5. CONTEXT PRESET: 최신 메시지를 몇 개 참고할지
  *
  * 고정 안전 규칙을 항상 앞에 두는 이유:
  * 톤이나 길이 옵션이 강해져도 {{char}} 시점으로 넘어가거나 새 사건을 만들지 않게 하기 위해서입니다.
@@ -566,6 +686,7 @@ function buildSystemPrompt() {
   const tonePreset = getPresetValue(TONE_PRESETS, settings.tonePreset, DEFAULT_SETTINGS.tonePreset);
   const languagePreset = getPresetValue(LANGUAGE_PRESETS, settings.outputLanguage, DEFAULT_SETTINGS.outputLanguage);
   const lengthPreset = getPresetValue(LENGTH_PRESETS, settings.lengthPreset, DEFAULT_SETTINGS.lengthPreset);
+  const contextPreset = getPresetValue(CONTEXT_PRESETS, settings.contextPreset, DEFAULT_SETTINGS.contextPreset);
 
   return [
     DEFAULT_SYSTEM_PROMPT,
@@ -577,7 +698,10 @@ function buildSystemPrompt() {
     languagePreset.prompt,
     '',
     'LENGTH PRESET:',
-    lengthPreset.prompt
+    lengthPreset.prompt,
+    '',
+    'RECENT CONTEXT PRESET:',
+    contextPreset.prompt
   ].join('\n');
 }
 
@@ -588,6 +712,11 @@ function buildSystemPrompt() {
  * 이 함수만 수정해도 대필 스타일을 크게 바꿀 수 있습니다.
  */
 function buildRewritePrompt(originalText) {
+  const recentContextText = getRecentContextText();
+  const recentContextBlock = recentContextText
+    ? ['<RECENT_CONTEXT>', recentContextText, '</RECENT_CONTEXT>', '']
+    : ['<RECENT_CONTEXT>', 'No recent context was provided.', '</RECENT_CONTEXT>', ''];
+
   return [
     'Rewrite the following SillyTavern draft.',
     '',
@@ -602,6 +731,14 @@ function buildRewritePrompt(originalText) {
     'If {{user}} / {{User}} gender is unclear, do not guess; use neutral Korean phrasing or a natural omitted subject.',
     '</PRONOUN_RULE>',
     '',
+    '<CONTEXT_RULE>',
+    'Recent context is reference-only.',
+    'Use it only for scene continuity, relationship, mood, and immediate conversational context.',
+    'Do not continue, answer, copy, or rewrite <RECENT_CONTEXT>.',
+    'Rewrite only <USER_INPUT>.',
+    '</CONTEXT_RULE>',
+    '',
+    ...recentContextBlock,
     '<USER_INPUT>',
     originalText,
     '</USER_INPUT>',
@@ -828,7 +965,12 @@ async function rewriteCurrentInput() {
     toastr?.success?.('대필 결과로 입력창을 덮어썼어요.');
   } catch (error) {
     console.error(`[${EXTENSION_NAME}] rewrite failed`, error);
-    toastr?.error?.('대필 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
+
+    if (error?.name === 'GhostwriterProfileError') {
+      toastr?.error?.(error.message);
+    } else {
+      toastr?.error?.('대필 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
+    }
   } finally {
     try {
       await restoreConnectionProfile(profileState);
@@ -952,8 +1094,14 @@ function insertSettingsPanel() {
             ${buildPresetOptions(LENGTH_PRESETS)}
           </select>
         </label>
+        <label class="ghostwriter-settings-field" for="${EXTENSION_NAME}-context-preset">
+          <span>참고할 최신 메시지</span>
+          <select id="${EXTENSION_NAME}-context-preset" class="text_pole">
+            ${buildPresetOptions(CONTEXT_PRESETS)}
+          </select>
+        </label>
         <div class="ghostwriter-settings-hint">
-          시제는 설정 없이 과거형으로 고정돼요. 톤, 언어, 길이만 선택해 대필 스타일을 조정해요.
+          시제는 과거형으로 고정돼요. 최신 메시지는 장면과 분위기 참고용이며, 대필 대상은 입력창 원문뿐이에요.
         </div>
       </div>
     </div>
@@ -966,6 +1114,7 @@ function insertSettingsPanel() {
   const toneSelect = panel.querySelector(`#${EXTENSION_NAME}-tone-preset`);
   const languageSelect = panel.querySelector(`#${EXTENSION_NAME}-output-language`);
   const lengthSelect = panel.querySelector(`#${EXTENSION_NAME}-length-preset`);
+  const contextSelect = panel.querySelector(`#${EXTENSION_NAME}-context-preset`);
 
   profileSelect.addEventListener('change', () => {
     getSettings().profileName = profileSelect.value;
@@ -987,6 +1136,12 @@ function insertSettingsPanel() {
   lengthSelect.value = LENGTH_PRESETS[settings.lengthPreset] ? settings.lengthPreset : DEFAULT_SETTINGS.lengthPreset;
   lengthSelect.addEventListener('change', () => {
     getSettings().lengthPreset = lengthSelect.value;
+    saveSettings();
+  });
+
+  contextSelect.value = CONTEXT_PRESETS[settings.contextPreset] ? settings.contextPreset : DEFAULT_SETTINGS.contextPreset;
+  contextSelect.addEventListener('change', () => {
+    getSettings().contextPreset = contextSelect.value;
     saveSettings();
   });
 
