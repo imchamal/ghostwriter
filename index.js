@@ -59,6 +59,11 @@ const DEFAULT_SYSTEM_PROMPT = [
 // 버튼을 빠르게 여러 번 눌러도 요청이 겹치지 않도록 합니다.
 let isGenerating = false;
 
+// 미리보기 창에서 사용할 원문과 대필 결과를 잠시 저장합니다.
+// 사용자가 "덮어쓰기" 또는 "아래에 추가"를 누를 때 이 값을 사용합니다.
+let latestPreviewOriginal = '';
+let latestPreviewRewritten = '';
+
 /**
  * 버튼 안의 아이콘을 설정합니다.
  *
@@ -126,6 +131,46 @@ function setInputTextareaValue(text) {
 }
 
 /**
+ * 입력창의 기존 내용 아래에 대필 결과를 덧붙입니다.
+ *
+ * 원문을 보존한 채 비교하거나, 결과를 일부만 가져다 쓰고 싶을 때 유용합니다.
+ */
+function appendInputTextareaValue(text) {
+  const textarea = getInputTextarea();
+
+  if (!textarea) {
+    toastr?.error?.('입력창을 찾지 못했어요.');
+    return;
+  }
+
+  const currentText = textarea.value.trimEnd();
+  const nextText = currentText ? `${currentText}\n\n${text}` : text;
+  setInputTextareaValue(nextText);
+}
+
+/**
+ * 대필 결과를 클립보드에 복사합니다.
+ *
+ * 브라우저 보안 정책 때문에 clipboard API가 막힐 수 있어,
+ * 실패하면 임시 textarea를 사용하는 예비 방식을 시도합니다.
+ */
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+}
+
+/**
  * 모델에 보낼 실제 프롬프트를 만듭니다.
  *
  * originalText는 유저가 입력창에 쓴 원문입니다.
@@ -153,6 +198,136 @@ function buildRewritePrompt(originalText) {
     'Output requirement:',
     'Write only the rewritten Korean third-person prose where {{user}} / <USER> is the actor.'
   ].join('\n');
+}
+
+/**
+ * 미리보기 창 DOM을 한 번만 만듭니다.
+ *
+ * 창 안의 버튼:
+ * - 덮어쓰기: 입력창 원문을 대필 결과로 교체합니다.
+ * - 아래에 추가: 입력창 원문 아래에 대필 결과를 붙입니다.
+ * - 복사: 입력창은 그대로 두고 결과만 클립보드에 복사합니다.
+ * - 닫기: 아무것도 적용하지 않고 창만 닫습니다.
+ */
+function ensurePreviewModal() {
+  let modal = document.querySelector(`#${EXTENSION_NAME}-preview`);
+
+  if (modal) {
+    return modal;
+  }
+
+  modal = document.createElement('div');
+  modal.id = `${EXTENSION_NAME}-preview`;
+  modal.className = 'ghostwriter-preview ghostwriter-preview-hidden';
+  modal.innerHTML = `
+    <div class="ghostwriter-preview-backdrop" data-ghostwriter-close="true"></div>
+    <div class="ghostwriter-preview-card" role="dialog" aria-modal="true" aria-labelledby="ghostwriter-preview-title">
+      <div class="ghostwriter-preview-header">
+        <div id="ghostwriter-preview-title" class="ghostwriter-preview-title">ghostwriter 미리보기</div>
+        <button type="button" class="ghostwriter-preview-icon-button" data-ghostwriter-close="true" aria-label="미리보기 닫기">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="ghostwriter-preview-section">
+        <div class="ghostwriter-preview-label">원문</div>
+        <div class="ghostwriter-preview-text" data-ghostwriter-original></div>
+      </div>
+      <div class="ghostwriter-preview-section">
+        <div class="ghostwriter-preview-label">대필 결과</div>
+        <textarea class="ghostwriter-preview-result" data-ghostwriter-result></textarea>
+      </div>
+      <div class="ghostwriter-preview-actions">
+        <button type="button" class="menu_button ghostwriter-preview-action" data-ghostwriter-action="replace">덮어쓰기</button>
+        <button type="button" class="menu_button ghostwriter-preview-action" data-ghostwriter-action="append">아래에 추가</button>
+        <button type="button" class="menu_button ghostwriter-preview-action" data-ghostwriter-action="copy">복사</button>
+        <button type="button" class="menu_button ghostwriter-preview-action ghostwriter-preview-secondary" data-ghostwriter-close="true">닫기</button>
+      </div>
+    </div>
+  `;
+
+  modal.addEventListener('click', handlePreviewClick);
+  document.body.appendChild(modal);
+  return modal;
+}
+
+/**
+ * 미리보기 창에서 버튼을 눌렀을 때 실행되는 함수입니다.
+ */
+async function handlePreviewClick(event) {
+  const closeTarget = event.target.closest('[data-ghostwriter-close]');
+  const actionTarget = event.target.closest('[data-ghostwriter-action]');
+
+  if (closeTarget) {
+    closePreviewModal();
+    return;
+  }
+
+  if (!actionTarget) {
+    return;
+  }
+
+  const modal = ensurePreviewModal();
+  const resultTextarea = modal.querySelector('[data-ghostwriter-result]');
+  const editedResult = resultTextarea?.value?.trim();
+
+  if (!editedResult) {
+    toastr?.warning?.('적용할 대필 결과가 비어 있어요.');
+    return;
+  }
+
+  const action = actionTarget.dataset.ghostwriterAction;
+
+  if (action === 'replace') {
+    setInputTextareaValue(editedResult);
+    closePreviewModal();
+    toastr?.success?.('대필 결과로 입력창을 덮어썼어요.');
+    return;
+  }
+
+  if (action === 'append') {
+    appendInputTextareaValue(editedResult);
+    closePreviewModal();
+    toastr?.success?.('대필 결과를 입력창 아래에 추가했어요.');
+    return;
+  }
+
+  if (action === 'copy') {
+    try {
+      await copyTextToClipboard(editedResult);
+      toastr?.success?.('대필 결과를 클립보드에 복사했어요.');
+    } catch (error) {
+      console.error(`[${EXTENSION_NAME}] copy failed`, error);
+      toastr?.error?.('클립보드 복사에 실패했어요.');
+    }
+  }
+}
+
+/**
+ * 대필 결과 미리보기 창을 엽니다.
+ *
+ * 결과 textarea는 사용자가 직접 수정할 수 있게 해두었습니다.
+ * 수정 후 덮어쓰기/아래에 추가/복사를 누르면 수정된 내용이 적용됩니다.
+ */
+function openPreviewModal(originalText, rewrittenText) {
+  latestPreviewOriginal = originalText;
+  latestPreviewRewritten = rewrittenText;
+
+  const modal = ensurePreviewModal();
+  const originalBox = modal.querySelector('[data-ghostwriter-original]');
+  const resultTextarea = modal.querySelector('[data-ghostwriter-result]');
+
+  originalBox.textContent = latestPreviewOriginal;
+  resultTextarea.value = latestPreviewRewritten;
+  modal.classList.remove('ghostwriter-preview-hidden');
+  resultTextarea.focus();
+}
+
+/**
+ * 미리보기 창을 닫습니다.
+ */
+function closePreviewModal() {
+  const modal = document.querySelector(`#${EXTENSION_NAME}-preview`);
+  modal?.classList.add('ghostwriter-preview-hidden');
 }
 
 /**
@@ -199,8 +374,8 @@ async function rewriteCurrentInput() {
       return;
     }
 
-    setInputTextareaValue(rewrittenText.trim());
-    toastr?.success?.('3인칭 대필을 입력창에 반영했어요.');
+    openPreviewModal(originalText, rewrittenText.trim());
+    toastr?.success?.('대필 결과를 미리보기로 열었어요.');
   } catch (error) {
     console.error(`[${EXTENSION_NAME}] rewrite failed`, error);
     toastr?.error?.('대필 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
