@@ -17,7 +17,7 @@
   border: 0;
   border-radius: 0;
   background: transparent !important;
-  color: var(--SmartThemeBodyColor, #222);
+  color: inherit;
   font-size: 17px;
   font-weight: 500;
   letter-spacing: 0;
@@ -51,7 +51,7 @@
 .ghostwriter-button:hover {
   background: transparent !important;
   box-shadow: none;
-  color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
+  color: inherit;
 }
 
 .ghostwriter-button:active {

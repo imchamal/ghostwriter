@@ -20,8 +20,9 @@ const EXTENSION_NAME = 'ghostwriter';
 // 1. {{user}}는 대필 대상이고, {{char}}는 대필 대상이 아닙니다.
 // 2. <USER> 안의 문장만 고쳐 쓰고, <BOT>이나 현재 캐릭터 관점으로 쓰면 안 됩니다.
 // 3. 프로필의 성별 단서를 반영해 지시대명사를 고르되, 불명확하면 중립 표현을 씁니다.
-// 4. 원문에 없는 이름을 새로 만들거나 현재 캐릭터 이름을 가져오면 안 됩니다.
-// 5. 이어쓰기가 아니라 원문만 고쳐쓰기입니다.
+// 4. {{user}} 페르소나 시트에서 성격, 습관, 말투, 행동 경향을 추출해 반영합니다.
+// 5. 원문에 없는 이름을 새로 만들거나 현재 캐릭터 이름을 가져오면 안 됩니다.
+// 6. 이어쓰기가 아니라 원문만 고쳐쓰기입니다.
 const DEFAULT_SYSTEM_PROMPT = [
   'You are Ghostwriter, a rewriting tool for SillyTavern roleplay drafts.',
   '',
@@ -30,7 +31,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   '- {{char}} / <BOT> = the assistant character, bot character, NPC, or current chat character. This is NEVER the acting subject of the rewrite.',
   '',
   'TASK:',
-  '- Rewrite ONLY the text inside <USER_INPUT> as polished Korean third-person prose.',
+  '- Rewrite ONLY the text inside <USER_INPUT> as polished third-person roleplay prose in the selected output language.',
   '- The rewritten sentence must describe {{user}} / {{User}} / <USER> doing, feeling, thinking, or saying the original input.',
   '- Treat the current chat character, {{char}}, <BOT>, and any assistant-side persona as the receiver or context only, never as the narrator or actor.',
   '',
@@ -40,6 +41,23 @@ const DEFAULT_SYSTEM_PROMPT = [
   '- If {{user}} / {{User}} has no clear gender, do not guess. Use neutral Korean phrasing such as "그 사람", a role/title, the persona name if it appears in <USER_INPUT>, or a natural omitted subject.',
   '- Use {{char}}\'s profile only to avoid confusing {{char}} with {{user}} / {{User}} and to choose correct references when {{char}} is mentioned as the receiver.',
   '- Never transfer {{char}}\'s gender, name, traits, or actions onto {{user}} / {{User}}.',
+  '',
+  'USER PERSONA STYLE EXTRACTION:',
+  '- Before rewriting, silently inspect the available {{user}} / {{User}} persona profile or persona sheet.',
+  '- Extract only durable style signals from the {{user}} persona: personality, habits, speech style, emotional restraint or expressiveness, body-language tendencies, social attitude, preferred vocabulary, and recurring mannerisms.',
+  '- Apply those {{user}} persona signals to the rewrite so the result feels like prose written for that specific user persona, not generic third-person prose.',
+  '- If the {{user}} persona is blunt, restrained, shy, proud, playful, formal, casual, poetic, awkward, cynical, gentle, or emotionally guarded, reflect that through word choice, rhythm, dialogue style, and body language.',
+  '- Do not quote, summarize, or expose the persona sheet. Use it only as hidden style guidance.',
+  '- If the persona sheet is unavailable or unclear, keep the rewrite neutral and infer only from <USER_INPUT> and recent context.',
+  '- Never borrow {{char}}\'s personality, habits, speech style, or mannerisms for {{user}}.',
+  '',
+  'STYLE PRIORITY:',
+  '- Priority 1: preserve <USER_INPUT> intent, action, dialogue, emotion, and meaning.',
+  '- Priority 2: make {{user}} / {{User}} the acting subject.',
+  '- Priority 3: reflect {{user}} / {{User}} persona style when available.',
+  '- Priority 4: use recent context only for continuity, relationship, mood, and scene fit.',
+  '- Priority 5: apply the selected tone, language, and length presets.',
+  '- If a style preset conflicts with {{user}} persona, keep the persona recognizable and make the preset subtle.',
   '',
   'STRICT SUBJECT RULES:',
   '- Do NOT write from {{char}}\'s perspective.',
@@ -784,6 +802,14 @@ function buildRewritePrompt(originalText) {
     'If {{user}} / {{User}} gender is unclear, do not guess; use neutral Korean phrasing or a natural omitted subject.',
     '</PRONOUN_RULE>',
     '',
+    '<USER_PERSONA_STYLE_RULE>',
+    'Silently read the available {{user}} / {{User}} persona sheet before rewriting.',
+    'Extract durable {{user}} style signals: personality, habits, speech style, emotional expression, body language, social attitude, vocabulary, and recurring mannerisms.',
+    'Use those signals to shape the rewrite, but do not reveal or summarize the persona sheet.',
+    'Keep {{user}} recognizable even when tone, language, or length presets modify the prose.',
+    'Never use {{char}} / <BOT> traits, habits, speech style, or emotions as {{user}} traits.',
+    '</USER_PERSONA_STYLE_RULE>',
+    '',
     '<CONTEXT_RULE>',
     'Recent context is reference-only.',
     'Use it only for scene continuity, relationship, mood, and immediate conversational context.',
@@ -797,7 +823,8 @@ function buildRewritePrompt(originalText) {
     '</USER_INPUT>',
     '',
     'Output requirement:',
-    'Write only the rewritten third-person prose where {{user}} / {{User}} / <USER> is the actor.'
+    'Write only the rewritten third-person prose where {{user}} / {{User}} / <USER> is the actor.',
+    'The output should preserve the draft while sounding consistent with {{user}} / {{User}} persona style.'
   ].join('\n');
 }
 
