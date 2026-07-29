@@ -166,7 +166,7 @@ const CONTEXT_PRESETS = {
   }
 };
 
-// 채팅별/유저별로 따로 저장할 문체 조절 기본값입니다.
+// 페르소나별 또는 현재 채팅 전용으로 저장할 문체 조절 기본값입니다.
 // 0은 "페르소나 기준 유지"입니다.
 // 음수/양수는 페르소나를 완전히 바꾸는 값이 아니라, 살짝 밀어주는 보조 지시로만 사용합니다.
 const DEFAULT_STYLE_CONTROLS = {
@@ -243,7 +243,9 @@ const DEFAULT_SETTINGS = {
   tonePreset: 'balanced',
   outputLanguage: 'ko',
   lengthPreset: 'medium',
-  contextPreset: 'normal'
+  contextPreset: 'normal',
+  styleProfiles: {},
+  styleScopeByChat: {}
 };
 
 // 마지막으로 패널을 그린 채팅 키입니다.
@@ -254,9 +256,22 @@ let lastRenderedChatKey = '';
 // 같은 채팅 안에서 활성 유저 페르소나만 바뀌는 경우도 감지하기 위해 따로 둡니다.
 let lastRenderedStyleControlsKey = '';
 
+// 문체 슬라이더는 이제 움직이는 즉시 저장하지 않습니다.
+// 사용자가 [문체 저장]을 눌렀을 때만 extensionSettings에 확정 저장합니다.
+let pendingStyleControls = { ...DEFAULT_STYLE_CONTROLS };
+let isStyleControlsDirty = false;
+
 // 사용자가 직접 닫은 패널인지 기억합니다.
 // 대필 기록이 있어도 닫기 버튼을 누르면 숨기고, 새 대필이 생성되면 다시 열립니다.
 let isHistoryPanelClosed = false;
+
+function cloneDefaultSetting(value) {
+  if (value && typeof value === 'object') {
+    return Array.isArray(value) ? [...value] : { ...value };
+  }
+
+  return value;
+}
 
 /**
  * ghostwriter 설정을 가져옵니다.
@@ -272,13 +287,23 @@ function getSettings() {
   }
 
   if (!context.extensionSettings[EXTENSION_NAME]) {
-    context.extensionSettings[EXTENSION_NAME] = { ...DEFAULT_SETTINGS };
+    context.extensionSettings[EXTENSION_NAME] = Object.fromEntries(
+      Object.entries(DEFAULT_SETTINGS).map(([key, value]) => [key, cloneDefaultSetting(value)])
+    );
   }
 
   for (const key of Object.keys(DEFAULT_SETTINGS)) {
     if (!Object.hasOwn(context.extensionSettings[EXTENSION_NAME], key)) {
-      context.extensionSettings[EXTENSION_NAME][key] = DEFAULT_SETTINGS[key];
+      context.extensionSettings[EXTENSION_NAME][key] = cloneDefaultSetting(DEFAULT_SETTINGS[key]);
     }
+  }
+
+  if (!context.extensionSettings[EXTENSION_NAME].styleProfiles || typeof context.extensionSettings[EXTENSION_NAME].styleProfiles !== 'object') {
+    context.extensionSettings[EXTENSION_NAME].styleProfiles = {};
+  }
+
+  if (!context.extensionSettings[EXTENSION_NAME].styleScopeByChat || typeof context.extensionSettings[EXTENSION_NAME].styleScopeByChat !== 'object') {
+    context.extensionSettings[EXTENSION_NAME].styleScopeByChat = {};
   }
 
   return context.extensionSettings[EXTENSION_NAME];
@@ -292,6 +317,23 @@ function getSettings() {
 function saveSettings() {
   const context = getSillyTavernContext();
   context?.saveSettingsDebounced?.();
+}
+
+/**
+ * 사용자가 직접 저장 버튼을 눌렀을 때 쓰는 저장 함수입니다.
+ *
+ * 일부 SillyTavern 버전은 즉시 저장 함수(saveSettings)를 제공할 수 있습니다.
+ * 없으면 기존 debounced 저장으로 fallback합니다.
+ */
+function saveSettingsNow() {
+  const context = getSillyTavernContext();
+
+  if (typeof context?.saveSettings === 'function') {
+    return context.saveSettings();
+  }
+
+  context?.saveSettingsDebounced?.();
+  return undefined;
 }
 
 /**
@@ -684,17 +726,23 @@ function syncStyleControlsPanel() {
 
   const speechStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-speech-style`);
   const moodStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-mood-style`);
+  const chatOnlyCheckbox = panel.querySelector(`#${EXTENSION_NAME}-style-chat-only`);
 
   if (!speechStyleSlider || !moodStyleSlider) {
     return;
   }
 
   const styleControls = loadStyleControls();
+  resetPendingStyleControls(styleControls);
   speechStyleSlider.value = styleControls.speechStyle;
   moodStyleSlider.value = styleControls.moodStyle;
+  if (chatOnlyCheckbox) {
+    chatOnlyCheckbox.checked = isChatOnlyStyleScopeEnabled();
+  }
   updateStyleSliderLabel(panel, speechStyleSlider, SPEECH_STYLE_PROMPTS);
   updateStyleSliderLabel(panel, moodStyleSlider, MOOD_STYLE_PROMPTS);
-  lastRenderedStyleControlsKey = getStyleControlsStorageKey();
+  updateStyleSaveState(panel);
+  lastRenderedStyleControlsKey = getStyleProfileKey();
 }
 
 /**
@@ -717,6 +765,7 @@ function resetRewriteOptions(selects) {
   settings.lengthPreset = DEFAULT_SETTINGS.lengthPreset;
   settings.contextPreset = DEFAULT_SETTINGS.contextPreset;
   saveStyleControls(DEFAULT_STYLE_CONTROLS);
+  resetPendingStyleControls(DEFAULT_STYLE_CONTROLS);
 
   selects.toneSelect.value = settings.tonePreset;
   selects.languageSelect.value = settings.outputLanguage;
@@ -726,6 +775,7 @@ function resetRewriteOptions(selects) {
   selects.moodStyleSlider.value = DEFAULT_STYLE_CONTROLS.moodStyle;
   updateStyleSliderLabel(selects.panel, selects.speechStyleSlider, SPEECH_STYLE_PROMPTS);
   updateStyleSliderLabel(selects.panel, selects.moodStyleSlider, MOOD_STYLE_PROMPTS);
+  updateStyleSaveState(selects.panel);
 
   saveSettings();
   toastr?.success?.('대필 옵션을 기본값으로 되돌렸어요.');
@@ -843,22 +893,57 @@ function getHistoryStorageKey() {
 }
 
 /**
- * 말투/분위기 조절값을 저장하는 키를 만듭니다.
+ * 예전 버전에서 localStorage에 쓰던 말투/분위기 조절값 키를 만듭니다.
  *
- * 요청한 구조:
- * - 채팅별
- * - 현재 활성화된 유저 페르소나별
- *
- * 예:
- * ghostwriter.style.character_3_chat_current.Hermione
+ * 새 버전은 extensionSettings.styleProfiles를 쓰지만,
+ * 기존 사용자의 저장값을 잃지 않기 위해 처음 한 번 읽어올 때 사용합니다.
  */
-function getStyleControlsStorageKey() {
+function getLegacyStyleControlsStorageKey() {
   return [
     EXTENSION_NAME,
     'style',
     sanitizeStorageKeyPart(getCurrentChatKey()),
     sanitizeStorageKeyPart(getCurrentUserPersonaKey())
   ].join('.');
+}
+
+/**
+ * 현재 채팅의 "이 채팅에만 적용" 옵션 저장 키입니다.
+ */
+function getStyleScopeChatKey() {
+  return sanitizeStorageKeyPart(getCurrentChatKey());
+}
+
+/**
+ * 현재 채팅에서 문체 조절값을 채팅 전용으로 쓸지 확인합니다.
+ */
+function isChatOnlyStyleScopeEnabled() {
+  const settings = getSettings();
+  return Boolean(settings.styleScopeByChat?.[getStyleScopeChatKey()]);
+}
+
+/**
+ * 현재 채팅의 "이 채팅에만 적용" 옵션을 저장합니다.
+ */
+function setChatOnlyStyleScopeEnabled(isEnabled) {
+  const settings = getSettings();
+  settings.styleScopeByChat[getStyleScopeChatKey()] = Boolean(isEnabled);
+}
+
+/**
+ * extensionSettings.styleProfiles 안에서 쓸 안정적인 문체 프로필 키입니다.
+ *
+ * 기본값은 페르소나별 저장입니다.
+ * "이 채팅에만 적용"을 켠 경우에만 채팅+페르소나 전용 키를 씁니다.
+ */
+function getStyleProfileKey(chatOnly = isChatOnlyStyleScopeEnabled()) {
+  const personaKey = sanitizeStorageKeyPart(getCurrentUserPersonaKey());
+
+  if (chatOnly) {
+    return `chat:${sanitizeStorageKeyPart(getCurrentChatKey())}:persona:${personaKey}`;
+  }
+
+  return `persona:${personaKey}`;
 }
 
 /**
@@ -887,36 +972,90 @@ function normalizeStyleControlValue(value) {
 }
 
 /**
- * 현재 채팅 + 현재 유저 페르소나에 저장된 말투/분위기 조절값을 불러옵니다.
+ * 기존 localStorage 값을 새 extensionSettings 저장소로 가져옵니다.
+ *
+ * 새 저장소에 이미 값이 있으면 건드리지 않습니다.
+ * localStorage 값도 삭제하지 않아 문제가 생겼을 때 되돌릴 여지를 남깁니다.
  */
-function loadStyleControls() {
-  try {
-    const rawControls = localStorage.getItem(getStyleControlsStorageKey());
-    const parsedControls = rawControls ? JSON.parse(rawControls) : {};
+function migrateLegacyStyleControlsIfNeeded(profileKey) {
+  const settings = getSettings();
 
-    return {
-      speechStyle: normalizeStyleControlValue(parsedControls.speechStyle ?? DEFAULT_STYLE_CONTROLS.speechStyle),
-      moodStyle: normalizeStyleControlValue(parsedControls.moodStyle ?? DEFAULT_STYLE_CONTROLS.moodStyle)
+  if (settings.styleProfiles[profileKey]) {
+    return;
+  }
+
+  try {
+    const rawControls = localStorage.getItem(getLegacyStyleControlsStorageKey());
+    const parsedControls = rawControls ? JSON.parse(rawControls) : null;
+
+    if (!parsedControls || typeof parsedControls !== 'object') {
+      return;
+    }
+
+    settings.styleProfiles[profileKey] = {
+      speechStyle: normalizeStyleControlValue(parsedControls.speechStyle),
+      moodStyle: normalizeStyleControlValue(parsedControls.moodStyle),
+      updatedAt: Date.now(),
+      migratedFrom: 'localStorage'
     };
+    saveSettings();
   } catch (error) {
-    console.warn(`[${EXTENSION_NAME}] style controls load failed`, error);
-    return { ...DEFAULT_STYLE_CONTROLS };
+    console.warn(`[${EXTENSION_NAME}] legacy style controls migration failed`, error);
   }
 }
 
 /**
- * 현재 채팅 + 현재 유저 페르소나에 말투/분위기 조절값을 저장합니다.
+ * 현재 페르소나 또는 현재 채팅 전용 문체 조절값을 불러옵니다.
+ */
+function loadStyleControls() {
+  const settings = getSettings();
+  const profileKey = getStyleProfileKey();
+  migrateLegacyStyleControlsIfNeeded(profileKey);
+
+  const savedControls = settings.styleProfiles[profileKey] || {};
+
+  return {
+    speechStyle: normalizeStyleControlValue(savedControls.speechStyle ?? DEFAULT_STYLE_CONTROLS.speechStyle),
+    moodStyle: normalizeStyleControlValue(savedControls.moodStyle ?? DEFAULT_STYLE_CONTROLS.moodStyle)
+  };
+}
+
+/**
+ * 현재 페르소나 또는 현재 채팅 전용 문체 조절값을 저장합니다.
  */
 function saveStyleControls(styleControls) {
-  try {
-    const normalizedControls = {
-      speechStyle: normalizeStyleControlValue(styleControls.speechStyle),
-      moodStyle: normalizeStyleControlValue(styleControls.moodStyle)
-    };
+  const settings = getSettings();
+  const profileKey = getStyleProfileKey();
+  settings.styleProfiles[profileKey] = {
+    speechStyle: normalizeStyleControlValue(styleControls.speechStyle),
+    moodStyle: normalizeStyleControlValue(styleControls.moodStyle),
+    updatedAt: Date.now()
+  };
+  saveSettingsNow();
+}
 
-    localStorage.setItem(getStyleControlsStorageKey(), JSON.stringify(normalizedControls));
-  } catch (error) {
-    console.warn(`[${EXTENSION_NAME}] style controls save failed`, error);
+/**
+ * 채팅/페르소나 전환 시 화면의 임시 문체 상태를 저장된 값으로 다시 맞춥니다.
+ */
+function resetPendingStyleControls(styleControls = loadStyleControls()) {
+  pendingStyleControls = {
+    speechStyle: normalizeStyleControlValue(styleControls.speechStyle),
+    moodStyle: normalizeStyleControlValue(styleControls.moodStyle)
+  };
+  isStyleControlsDirty = false;
+}
+
+function updateStyleSaveState(panel) {
+  const status = panel?.querySelector('[data-ghostwriter-style-save-state]');
+  const saveButton = panel?.querySelector('[data-ghostwriter-save-style]');
+
+  if (status) {
+    status.textContent = isStyleControlsDirty ? '변경사항 있음' : '저장됨';
+    status.classList.toggle('ghostwriter-style-save-state-dirty', isStyleControlsDirty);
+  }
+
+  if (saveButton) {
+    saveButton.toggleAttribute('disabled', !isStyleControlsDirty);
   }
 }
 
@@ -1615,7 +1754,7 @@ async function handleHistoryPanelClick(event) {
 function watchChatKeyChanges() {
   window.setInterval(() => {
     const currentChatKey = getCurrentChatKey();
-    const currentStyleControlsKey = getStyleControlsStorageKey();
+    const currentStyleControlsKey = getStyleProfileKey();
 
     syncGhostwriterButtonWithSendButton();
 
@@ -1624,7 +1763,7 @@ function watchChatKeyChanges() {
       renderHistoryPanel();
     }
 
-    if (currentStyleControlsKey !== lastRenderedStyleControlsKey) {
+    if (!isStyleControlsDirty && currentStyleControlsKey !== lastRenderedStyleControlsKey) {
       syncStyleControlsPanel();
     }
   }, 2000);
@@ -1756,6 +1895,7 @@ function insertSettingsPanel() {
 
   const settings = getSettings();
   const styleControls = loadStyleControls();
+  resetPendingStyleControls(styleControls);
   const panel = document.createElement('div');
   panel.id = `${EXTENSION_NAME}-settings`;
   panel.className = 'ghostwriter-settings';
@@ -1820,10 +1960,25 @@ function insertSettingsPanel() {
         <div class="ghostwriter-style-controls">
           <div class="ghostwriter-style-controls-title">페르소나 문체 조절</div>
           <div class="ghostwriter-settings-hint">
-            가운데는 현재 {{user}} 페르소나 기준이에요. 채팅별 현재 유저 페르소나마다 따로 저장돼요.
+            가운데는 현재 {{user}} 페르소나 기준이에요. 기본적으로 페르소나별로 저장되고, 필요하면 현재 채팅에만 따로 저장할 수 있어요.
           </div>
+          <label class="checkbox_label ghostwriter-style-scope" for="${EXTENSION_NAME}-style-chat-only">
+            <input id="${EXTENSION_NAME}-style-chat-only" type="checkbox" />
+            <span>이 채팅에만 적용</span>
+          </label>
           ${buildStyleSliderHtml(`${EXTENSION_NAME}-speech-style`, '말투', '격식', '구어체')}
           ${buildStyleSliderHtml(`${EXTENSION_NAME}-mood-style`, '분위기', '진지함', '장난기')}
+          <div class="ghostwriter-style-save-row">
+            <span class="ghostwriter-style-save-state" data-ghostwriter-style-save-state>저장됨</span>
+            <button
+              type="button"
+              class="menu_button ghostwriter-style-save"
+              data-ghostwriter-save-style="true"
+              disabled
+            >
+              문체 저장
+            </button>
+          </div>
         </div>
         <div class="ghostwriter-settings-actions">
           <button
@@ -1846,8 +2001,10 @@ function insertSettingsPanel() {
   const languageSelect = panel.querySelector(`#${EXTENSION_NAME}-output-language`);
   const lengthSelect = panel.querySelector(`#${EXTENSION_NAME}-length-preset`);
   const contextSelect = panel.querySelector(`#${EXTENSION_NAME}-context-preset`);
+  const chatOnlyStyleCheckbox = panel.querySelector(`#${EXTENSION_NAME}-style-chat-only`);
   const speechStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-speech-style`);
   const moodStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-mood-style`);
+  const saveStyleButton = panel.querySelector('[data-ghostwriter-save-style]');
   const resetButton = panel.querySelector('[data-ghostwriter-reset-options]');
 
   profileSelect.addEventListener('change', () => {
@@ -1879,22 +2036,37 @@ function insertSettingsPanel() {
     saveSettings();
   });
 
+  chatOnlyStyleCheckbox.checked = isChatOnlyStyleScopeEnabled();
+  chatOnlyStyleCheckbox.addEventListener('change', () => {
+    setChatOnlyStyleScopeEnabled(chatOnlyStyleCheckbox.checked);
+    saveSettings();
+    syncStyleControlsPanel();
+  });
+
   speechStyleSlider.value = styleControls.speechStyle;
   updateStyleSliderLabel(panel, speechStyleSlider, SPEECH_STYLE_PROMPTS);
   speechStyleSlider.addEventListener('input', () => {
-    const currentControls = loadStyleControls();
-    currentControls.speechStyle = normalizeStyleControlValue(speechStyleSlider.value);
-    saveStyleControls(currentControls);
+    pendingStyleControls.speechStyle = normalizeStyleControlValue(speechStyleSlider.value);
+    isStyleControlsDirty = true;
     updateStyleSliderLabel(panel, speechStyleSlider, SPEECH_STYLE_PROMPTS);
+    updateStyleSaveState(panel);
   });
 
   moodStyleSlider.value = styleControls.moodStyle;
   updateStyleSliderLabel(panel, moodStyleSlider, MOOD_STYLE_PROMPTS);
   moodStyleSlider.addEventListener('input', () => {
-    const currentControls = loadStyleControls();
-    currentControls.moodStyle = normalizeStyleControlValue(moodStyleSlider.value);
-    saveStyleControls(currentControls);
+    pendingStyleControls.moodStyle = normalizeStyleControlValue(moodStyleSlider.value);
+    isStyleControlsDirty = true;
     updateStyleSliderLabel(panel, moodStyleSlider, MOOD_STYLE_PROMPTS);
+    updateStyleSaveState(panel);
+  });
+
+  saveStyleButton.addEventListener('click', () => {
+    saveStyleControls(pendingStyleControls);
+    resetPendingStyleControls(pendingStyleControls);
+    updateStyleSaveState(panel);
+    lastRenderedStyleControlsKey = getStyleProfileKey();
+    toastr?.success?.('페르소나 문체 조절값을 저장했어요.');
   });
 
   resetButton.addEventListener('click', () => {
@@ -1913,7 +2085,8 @@ function insertSettingsPanel() {
     populateConnectionProfileSelect(panel);
   });
 
-  lastRenderedStyleControlsKey = getStyleControlsStorageKey();
+  updateStyleSaveState(panel);
+  lastRenderedStyleControlsKey = getStyleProfileKey();
   populateConnectionProfileSelect(panel, settings.profileName || '');
 }
 

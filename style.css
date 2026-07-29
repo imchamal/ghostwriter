@@ -136,6 +136,10 @@
   letter-spacing: 0;
 }
 
+.ghostwriter-style-scope {
+  margin-top: 8px;
+}
+
 .ghostwriter-style-control {
   display: grid;
   gap: 6px;
@@ -175,6 +179,38 @@
   width: 100%;
   min-width: 0;
   accent-color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
+}
+
+.ghostwriter-style-save-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 10px;
+}
+
+.ghostwriter-style-save-state {
+  color: var(--SmartThemeEmColor, inherit);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.ghostwriter-style-save-state-dirty {
+  color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, inherit));
+  font-weight: 700;
+}
+
+.ghostwriter-style-save {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+  word-break: keep-all;
+  writing-mode: horizontal-tb;
 }
 
 .ghostwriter-settings-actions {
