@@ -1451,7 +1451,8 @@ function renderHistoryPanel() {
 
   panel.classList.remove('ghostwriter-history-hidden');
 
-  history.forEach((item) => {
+  history.forEach((item, index) => {
+    const isLatestItem = index === 0;
     const row = document.createElement('div');
     row.className = 'ghostwriter-history-item';
     row.dataset.ghostwriterHistoryId = item.id;
@@ -1494,6 +1495,18 @@ function renderHistoryPanel() {
     apply.title = '이 대필 결과를 입력창에 적용합니다.';
     apply.setAttribute('aria-label', '입력창에 적용');
 
+    const restoreOriginal = document.createElement('button');
+    restoreOriginal.type = 'button';
+    restoreOriginal.className = 'ghostwriter-history-restore';
+    restoreOriginal.dataset.ghostwriterHistoryRestoreOriginal = item.id;
+    restoreOriginal.innerHTML = '<i class="fa-solid fa-rotate-left" aria-hidden="true"></i>';
+    restoreOriginal.title = '대필 전 원문을 입력창에 복구합니다.';
+    restoreOriginal.setAttribute('aria-label', '원문 복구');
+
+    if (!isLatestItem) {
+      restoreOriginal.hidden = true;
+    }
+
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'ghostwriter-history-toggle';
@@ -1504,7 +1517,7 @@ function renderHistoryPanel() {
 
     const itemActions = document.createElement('div');
     itemActions.className = 'ghostwriter-history-item-actions';
-    itemActions.append(translate, apply, toggle);
+    itemActions.append(translate, restoreOriginal, apply, toggle);
 
     const detail = document.createElement('div');
     detail.className = 'ghostwriter-history-detail';
@@ -1676,6 +1689,7 @@ async function handleHistoryPanelClick(event) {
   const rerollLatestButton = event.target.closest('[data-ghostwriter-reroll-latest]');
   const toggleButton = event.target.closest('[data-ghostwriter-history-toggle]');
   const applyButton = event.target.closest('[data-ghostwriter-history-apply]');
+  const restoreOriginalButton = event.target.closest('[data-ghostwriter-history-restore-original]');
   const translateButton = event.target.closest('[data-ghostwriter-history-translate]');
 
   if (closeButton) {
@@ -1742,6 +1756,21 @@ async function handleHistoryPanelClick(event) {
       setButtonWorking(translateButton, false);
     }
 
+    return;
+  }
+
+  if (restoreOriginalButton) {
+    const history = loadHistory();
+    const item = history.find((historyItem) => historyItem.id === restoreOriginalButton.dataset.ghostwriterHistoryRestoreOriginal);
+
+    if (!item) {
+      toastr?.warning?.('복구할 원문 기록을 찾지 못했어요.');
+      renderHistoryPanel();
+      return;
+    }
+
+    setInputTextareaValue(item.original);
+    toastr?.success?.('대필 전 원문을 입력창에 복구했어요.');
     return;
   }
 
