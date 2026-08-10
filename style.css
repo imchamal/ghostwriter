@@ -14,15 +14,19 @@
    * 여기서 width/height/padding을 고정하면 전송 버튼 및 다른 확장 버튼들과 기준선이 어긋날 수 있으므로,
    * 버튼 박스는 원래 툴바 규칙을 따르고 ghostwriter는 아이콘 표현만 조정합니다.
    */
-  border: 0;
-  border-radius: 0;
+  border: 0 !important;
+  outline: 0;
+  border-radius: 0 !important;
   background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
   color: inherit;
   font-size: 17px;
   font-weight: 500;
   letter-spacing: 0;
   line-height: inherit;
-  box-shadow: none;
+  box-shadow: none !important;
+  filter: none;
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
@@ -50,19 +54,37 @@
 
 .ghostwriter-button:hover {
   background: transparent !important;
-  box-shadow: none;
+  background-color: transparent !important;
+  background-image: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
   color: inherit;
+}
+
+.ghostwriter-button:focus,
+.ghostwriter-button:focus-visible {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: 0;
 }
 
 .ghostwriter-button:active {
   transform: translateY(1px);
-  box-shadow: none;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
 }
 
 .ghostwriter-button:disabled,
 .ghostwriter-button.ghostwriter-working,
 .ghostwriter-history-reroll:disabled,
 .ghostwriter-history-reroll.ghostwriter-working,
+.ghostwriter-history-reroll-preview:disabled,
+.ghostwriter-history-reroll-preview.ghostwriter-working,
 .ghostwriter-history-translate:disabled,
 .ghostwriter-history-translate.ghostwriter-working {
   cursor: wait;
@@ -71,6 +93,7 @@
 
 .ghostwriter-button.ghostwriter-working i,
 .ghostwriter-history-reroll.ghostwriter-working i,
+.ghostwriter-history-reroll-preview.ghostwriter-working i,
 .ghostwriter-history-translate.ghostwriter-working i {
   animation: ghostwriter-pulse 780ms ease-in-out infinite;
 }
@@ -384,6 +407,9 @@
 
 .ghostwriter-history-toggle,
 .ghostwriter-history-translate,
+.ghostwriter-history-restore,
+.ghostwriter-history-cancel,
+.ghostwriter-history-reroll-preview,
 .ghostwriter-history-apply {
   width: 24px;
   min-width: 24px;
@@ -406,18 +432,29 @@
 
 .ghostwriter-history-toggle:hover,
 .ghostwriter-history-translate:hover,
+.ghostwriter-history-restore:hover,
+.ghostwriter-history-cancel:hover,
+.ghostwriter-history-reroll-preview:hover,
 .ghostwriter-history-apply:hover {
   background: transparent;
   color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
 }
 
 .ghostwriter-history-translate,
+.ghostwriter-history-restore,
 .ghostwriter-history-apply {
   display: none;
 }
 
 .ghostwriter-history-item-expanded .ghostwriter-history-translate:not([hidden]),
+.ghostwriter-history-item-expanded .ghostwriter-history-restore:not([hidden]),
 .ghostwriter-history-item-expanded .ghostwriter-history-apply {
+  display: inline-flex;
+}
+
+.ghostwriter-history-preview-item .ghostwriter-history-cancel,
+.ghostwriter-history-preview-item .ghostwriter-history-reroll-preview,
+.ghostwriter-history-preview-item .ghostwriter-history-apply {
   display: inline-flex;
 }
 
@@ -480,6 +517,9 @@
 
   .ghostwriter-history-toggle,
   .ghostwriter-history-translate,
+  .ghostwriter-history-restore,
+  .ghostwriter-history-cancel,
+  .ghostwriter-history-reroll-preview,
   .ghostwriter-history-apply {
     width: 23px;
     min-width: 23px;
