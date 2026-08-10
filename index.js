@@ -234,10 +234,6 @@ const MOOD_STYLE_PROMPTS = {
 // 버튼을 빠르게 여러 번 눌러도 요청이 겹치지 않도록 합니다.
 let isGenerating = false;
 
-// 아직 입력창에 적용하지 않은 최신 미리보기 결과입니다.
-// localStorage에 저장하지 않고, 현재 화면에서만 유지합니다.
-let pendingPreviewItem = null;
-
 // 채팅별로 저장할 대필 기록 개수입니다.
 // 요청대로 옵션 없이 항상 최신 3개만 보여주고 저장합니다.
 const MAX_HISTORY_ITEMS = 3;
@@ -1146,52 +1142,6 @@ function addHistoryItem(original, rewritten) {
 }
 
 /**
- * 대필 결과를 바로 입력창에 쓰지 않고 패널 상단 미리보기로 보관합니다.
- */
-function setPendingPreviewItem(original, rewritten) {
-  pendingPreviewItem = {
-    id: `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    createdAt: Date.now(),
-    chatKey: getCurrentChatKey(),
-    original,
-    rewritten
-  };
-  isHistoryPanelClosed = false;
-  saveHistoryPanelClosed(false);
-  renderHistoryPanel();
-}
-
-/**
- * 미리보기 결과를 입력창에 적용하고 정식 히스토리에 저장합니다.
- */
-function applyPendingPreviewItem() {
-  if (!pendingPreviewItem || pendingPreviewItem.chatKey !== getCurrentChatKey()) {
-    toastr?.warning?.('적용할 미리보기 결과가 없어요.');
-    renderHistoryPanel();
-    return;
-  }
-
-  const item = pendingPreviewItem;
-  pendingPreviewItem = null;
-  setInputTextareaValue(item.rewritten);
-  addHistoryItem(item.original, item.rewritten);
-  toastr?.success?.('미리보기 결과를 입력창에 적용했어요.');
-}
-
-/**
- * 미리보기 결과를 버리고 입력창 원문은 그대로 둡니다.
- */
-function cancelPendingPreviewItem() {
-  if (!pendingPreviewItem || pendingPreviewItem.chatKey !== getCurrentChatKey()) {
-    return;
-  }
-
-  pendingPreviewItem = null;
-  renderHistoryPanel();
-  toastr?.info?.('미리보기를 취소했어요.');
-}
-
-/**
  * 타임스탬프를 사람이 보기 쉬운 짧은 시간으로 바꿉니다.
  */
 function formatHistoryTime(timestamp) {
@@ -1490,84 +1440,16 @@ function renderHistoryPanel() {
   }
 
   const history = loadHistory();
-  const currentChatKey = getCurrentChatKey();
-  const previewItem = pendingPreviewItem?.chatKey === currentChatKey ? pendingPreviewItem : null;
-  lastRenderedChatKey = currentChatKey;
+  lastRenderedChatKey = getCurrentChatKey();
   isHistoryPanelClosed = loadHistoryPanelClosed();
   list.innerHTML = '';
 
-  if ((!previewItem && !history.length) || isHistoryPanelClosed) {
+  if (!history.length || isHistoryPanelClosed) {
     panel.classList.add('ghostwriter-history-hidden');
     return;
   }
 
   panel.classList.remove('ghostwriter-history-hidden');
-
-  if (previewItem) {
-    const previewRow = document.createElement('div');
-    previewRow.className = 'ghostwriter-history-item ghostwriter-history-preview-item';
-    previewRow.dataset.ghostwriterHistoryId = previewItem.id;
-
-    const previewHeader = document.createElement('div');
-    previewHeader.className = 'ghostwriter-history-item-header';
-
-    const previewLabel = document.createElement('div');
-    previewLabel.className = 'ghostwriter-history-time';
-    previewLabel.textContent = '미리보기';
-
-    const previewText = document.createElement('div');
-    previewText.className = 'ghostwriter-history-rewritten';
-    previewText.textContent = previewItem.rewritten;
-    previewText.title = '아직 입력창에 적용하지 않은 대필 결과입니다.';
-
-    const previewApply = document.createElement('button');
-    previewApply.type = 'button';
-    previewApply.className = 'ghostwriter-history-apply';
-    previewApply.dataset.ghostwriterPreviewApply = 'true';
-    previewApply.innerHTML = '<i class="fa-solid fa-keyboard" aria-hidden="true"></i>';
-    previewApply.title = '이 미리보기 결과를 입력창에 적용합니다.';
-    previewApply.setAttribute('aria-label', '미리보기 적용');
-
-    const previewCancel = document.createElement('button');
-    previewCancel.type = 'button';
-    previewCancel.className = 'ghostwriter-history-cancel';
-    previewCancel.dataset.ghostwriterPreviewCancel = 'true';
-    previewCancel.innerHTML = '<i class="fa-solid fa-xmark" aria-hidden="true"></i>';
-    previewCancel.title = '미리보기를 취소하고 입력창 원문을 그대로 둡니다.';
-    previewCancel.setAttribute('aria-label', '미리보기 취소');
-
-    const previewReroll = document.createElement('button');
-    previewReroll.type = 'button';
-    previewReroll.className = 'ghostwriter-history-reroll-preview';
-    previewReroll.dataset.ghostwriterPreviewReroll = 'true';
-    previewReroll.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>';
-    previewReroll.title = '같은 원문을 현재 설정으로 다시 대필합니다.';
-    previewReroll.setAttribute('aria-label', '미리보기 재대필');
-
-    const previewToggle = document.createElement('button');
-    previewToggle.type = 'button';
-    previewToggle.className = 'ghostwriter-history-toggle';
-    previewToggle.dataset.ghostwriterHistoryToggle = previewItem.id;
-    previewToggle.innerHTML = '<i class="fa-solid fa-angle-down" aria-hidden="true"></i>';
-    previewToggle.setAttribute('aria-label', '미리보기 전체보기');
-    previewToggle.setAttribute('aria-expanded', 'false');
-
-    const previewActions = document.createElement('div');
-    previewActions.className = 'ghostwriter-history-item-actions';
-    previewActions.append(previewReroll, previewCancel, previewApply, previewToggle);
-
-    const previewDetail = document.createElement('div');
-    previewDetail.className = 'ghostwriter-history-detail';
-
-    const previewDetailText = document.createElement('div');
-    previewDetailText.className = 'ghostwriter-history-detail-text';
-    previewDetailText.textContent = previewItem.rewritten;
-
-    previewDetail.append(previewDetailText);
-    previewHeader.append(previewLabel, previewText, previewActions);
-    previewRow.append(previewHeader, previewDetail);
-    list.appendChild(previewRow);
-  }
 
   history.forEach((item, index) => {
     const isLatestItem = index === 0;
@@ -1582,13 +1464,13 @@ function renderHistoryPanel() {
     time.className = 'ghostwriter-history-time';
     time.textContent = formatHistoryTime(item.createdAt);
 
-    // [히스토리 미리보기]
+    // [히스토리 요약]
     // 예전에는 이 영역을 누르면 바로 입력창에 적용했지만,
-    // 실수 클릭이 잦아서 이제는 읽기 전용 미리보기 텍스트로만 사용합니다.
+    // 실수 클릭이 잦아서 이제는 읽기 전용 요약 텍스트로만 사용합니다.
     const rewritten = document.createElement('div');
     rewritten.className = 'ghostwriter-history-rewritten';
     rewritten.textContent = item.rewritten;
-    rewritten.title = '대필 결과 미리보기입니다. 펼친 뒤 키보드 아이콘을 눌러 입력창에 적용합니다.';
+    rewritten.title = '대필 결과 요약입니다. 펼친 뒤 키보드 아이콘을 눌러 입력창에 적용합니다.';
 
     const translate = document.createElement('button');
     translate.type = 'button';
@@ -1754,7 +1636,7 @@ async function rewriteHistoryOriginal(itemId) {
     return;
   }
 
-  await rewriteOriginalToPreview(item.original, '저장된 원문을 다시 대필해 미리보기로 만들었어요.');
+  await rewriteOriginalAndApply(item.original, '저장된 원문을 다시 대필했어요.');
 }
 
 /**
@@ -1764,11 +1646,6 @@ async function rewriteHistoryOriginal(itemId) {
  * 히스토리에는 original로 저장되어 있으므로, 최신 항목의 original을 사용합니다.
  */
 async function rewriteLatestOriginal() {
-  if (pendingPreviewItem?.original && pendingPreviewItem.chatKey === getCurrentChatKey()) {
-    await rewriteOriginalToPreview(pendingPreviewItem.original, '같은 원문을 다시 대필해 미리보기를 갱신했어요.');
-    return;
-  }
-
   const latestItem = loadHistory()[0];
 
   if (!latestItem?.original) {
@@ -1790,9 +1667,6 @@ async function rewriteLatestOriginal() {
 async function handleHistoryPanelClick(event) {
   const closeButton = event.target.closest('[data-ghostwriter-history-close]');
   const rerollLatestButton = event.target.closest('[data-ghostwriter-reroll-latest]');
-  const previewApplyButton = event.target.closest('[data-ghostwriter-preview-apply]');
-  const previewCancelButton = event.target.closest('[data-ghostwriter-preview-cancel]');
-  const previewRerollButton = event.target.closest('[data-ghostwriter-preview-reroll]');
   const toggleButton = event.target.closest('[data-ghostwriter-history-toggle]');
   const applyButton = event.target.closest('[data-ghostwriter-history-apply]');
   const restoreOriginalButton = event.target.closest('[data-ghostwriter-history-restore-original]');
@@ -1800,41 +1674,6 @@ async function handleHistoryPanelClick(event) {
 
   if (closeButton) {
     closeHistoryPanel();
-    return;
-  }
-
-  if (previewApplyButton) {
-    applyPendingPreviewItem();
-    return;
-  }
-
-  if (previewCancelButton) {
-    cancelPendingPreviewItem();
-    return;
-  }
-
-  if (previewRerollButton) {
-    if (isGenerating) {
-      return;
-    }
-
-    try {
-      isGenerating = true;
-      setButtonWorking(previewRerollButton, true);
-      await rewriteLatestOriginal();
-    } catch (error) {
-      console.error(`[${EXTENSION_NAME}] preview rewrite failed`, error);
-
-      if (error?.name === 'GhostwriterProfileError') {
-        toastr?.error?.(error.message);
-      } else {
-        toastr?.error?.('미리보기 재대필 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
-      }
-    } finally {
-      isGenerating = false;
-      setButtonWorking(previewRerollButton, false);
-    }
-
     return;
   }
 
@@ -1993,9 +1832,9 @@ function bindCloseHistoryPanelOnSend() {
 }
 
 /**
- * 원문 하나를 현재 설정으로 대필하고, 입력창에 바로 쓰지 않고 미리보기로 표시합니다.
+ * 원문 하나를 현재 설정으로 대필하고, 결과를 바로 입력창에 적용한 뒤 히스토리에 저장합니다.
  */
-async function rewriteOriginalToPreview(originalText, successMessage = '대필 결과를 미리보기로 만들었어요.') {
+async function rewriteOriginalAndApply(originalText, successMessage = '대필 결과로 입력창을 덮어썼어요.') {
   const context = getSillyTavernContext();
 
   if (!context?.generateRaw) {
@@ -2013,7 +1852,9 @@ async function rewriteOriginalToPreview(originalText, successMessage = '대필 �
     return false;
   }
 
-  setPendingPreviewItem(originalText, rewrittenText.trim());
+  const cleanedText = rewrittenText.trim();
+  setInputTextareaValue(cleanedText);
+  addHistoryItem(originalText, cleanedText);
   toastr?.success?.(successMessage);
   return true;
 }
@@ -2042,7 +1883,7 @@ async function rewriteCurrentInput() {
   try {
     isGenerating = true;
     setButtonWorking(button, true);
-    await rewriteOriginalToPreview(originalText);
+    await rewriteOriginalAndApply(originalText);
   } catch (error) {
     console.error(`[${EXTENSION_NAME}] rewrite failed`, error);
 
