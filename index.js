@@ -35,6 +35,12 @@ const DEFAULT_SYSTEM_PROMPT = [
   '- The rewritten sentence must describe {{user}} / {{User}} / <USER> doing, feeling, thinking, or saying the original input.',
   '- Treat the current chat character, {{char}}, <BOT>, and any assistant-side persona as the receiver or context only, never as the narrator or actor.',
   '',
+  'DIALOGUE RULES:',
+  '- Preserve direct dialogue already written inside quotation marks. Do not rewrite, polish, paraphrase, translate, or change the words inside those quotation marks.',
+  '- You may adjust narration around quoted dialogue for grammar, flow, tense, and third-person perspective, but the quoted dialogue text itself must remain unchanged.',
+  '- If <USER_INPUT> contains indirect speech or implied speech without quotation marks, polish it as natural direct dialogue and put it inside quotation marks.',
+  '- Indirect speech converted into quotation marks must preserve the original meaning and speaker intent. Do not add new information or a new response.',
+  '',
   'PROFILE AND PRONOUN RULES:',
   '- Use the known profile information of {{user}} / {{User}} and {{char}} when choosing Korean pronouns, titles, and references.',
   '- If {{user}} / {{User}} has an explicit gender in the profile or context, choose a matching Korean third-person reference such as "그" for male, "그녀" for female, or another natural Korean equivalent.',
@@ -166,7 +172,7 @@ const CONTEXT_PRESETS = {
   }
 };
 
-// 페르소나별 또는 현재 채팅 전용으로 저장할 문체 조절 기본값입니다.
+// 페르소나별 또는 현재 채팅 전용으로 저장할 대사 조절 기본값입니다.
 // 0은 "페르소나 기준 유지"입니다.
 // 음수/양수는 페르소나를 완전히 바꾸는 값이 아니라, 살짝 밀어주는 보조 지시로만 사용합니다.
 const DEFAULT_STYLE_CONTROLS = {
@@ -174,53 +180,53 @@ const DEFAULT_STYLE_CONTROLS = {
   moodStyle: 0
 };
 
-// 말투 슬라이더 값이 실제 프롬프트에서 어떤 의미인지 정의합니다.
+// 대사 말투 슬라이더 값이 실제 프롬프트에서 어떤 의미인지 정의합니다.
 // -2는 격식 쪽, +2는 구어체 쪽입니다.
 const SPEECH_STYLE_PROMPTS = {
   '-2': {
     label: '격식',
-    prompt: 'Make speech and narration more formal, polite, and socially distant than the persona baseline.'
+    prompt: 'Make only dialogue and spoken lines more formal, polite, and socially distant than the persona baseline.'
   },
   '-1': {
     label: '약간 격식',
-    prompt: 'Make speech and narration slightly more formal than the persona baseline.'
+    prompt: 'Make only dialogue and spoken lines slightly more formal than the persona baseline.'
   },
   0: {
     label: '기준',
-    prompt: 'Keep speech style at the {{user}} persona baseline.'
+    prompt: 'Keep dialogue and spoken-line style at the {{user}} persona baseline.'
   },
   1: {
     label: '약간 구어체',
-    prompt: 'Make speech and narration slightly more casual and conversational than the persona baseline.'
+    prompt: 'Make only dialogue and spoken lines slightly more casual and conversational than the persona baseline.'
   },
   2: {
     label: '구어체',
-    prompt: 'Make speech and narration more casual, colloquial, and relaxed than the persona baseline.'
+    prompt: 'Make only dialogue and spoken lines more casual, colloquial, and relaxed than the persona baseline.'
   }
 };
 
-// 분위기 슬라이더 값이 실제 프롬프트에서 어떤 의미인지 정의합니다.
+// 대사 분위기 슬라이더 값이 실제 프롬프트에서 어떤 의미인지 정의합니다.
 // -2는 진지함 쪽, +2는 장난기 쪽입니다.
 const MOOD_STYLE_PROMPTS = {
   '-2': {
     label: '진지함',
-    prompt: 'Make the emotional atmosphere more serious, calm, and grounded than the persona baseline.'
+    prompt: 'Make only dialogue and dialogue-adjacent attitude more serious, calm, and grounded than the persona baseline.'
   },
   '-1': {
     label: '약간 진지함',
-    prompt: 'Make the emotional atmosphere slightly more serious and restrained than the persona baseline.'
+    prompt: 'Make only dialogue and dialogue-adjacent attitude slightly more serious and restrained than the persona baseline.'
   },
   0: {
     label: '기준',
-    prompt: 'Keep the emotional atmosphere at the {{user}} persona baseline.'
+    prompt: 'Keep dialogue attitude and emotional temperature at the {{user}} persona baseline.'
   },
   1: {
     label: '약간 가벼움',
-    prompt: 'Make the emotional atmosphere slightly lighter, softer, or more playful than the persona baseline.'
+    prompt: 'Make only dialogue and dialogue-adjacent attitude slightly lighter, softer, or more playful than the persona baseline.'
   },
   2: {
     label: '장난기',
-    prompt: 'Make the emotional atmosphere more lighthearted, playful, and teasing than the persona baseline.'
+    prompt: 'Make only dialogue and dialogue-adjacent attitude more lighthearted, playful, and teasing than the persona baseline.'
   }
 };
 
@@ -256,8 +262,8 @@ let lastRenderedChatKey = '';
 // 같은 채팅 안에서 활성 유저 페르소나만 바뀌는 경우도 감지하기 위해 따로 둡니다.
 let lastRenderedStyleControlsKey = '';
 
-// 문체 슬라이더는 이제 움직이는 즉시 저장하지 않습니다.
-// 사용자가 [문체 저장]을 눌렀을 때만 extensionSettings에 확정 저장합니다.
+// 대사 톤 슬라이더는 이제 움직이는 즉시 저장하지 않습니다.
+// 사용자가 [대사 톤 저장]을 눌렀을 때만 extensionSettings에 확정 저장합니다.
 let pendingStyleControls = { ...DEFAULT_STYLE_CONTROLS };
 let isStyleControlsDirty = false;
 
@@ -659,7 +665,7 @@ function buildPresetOptions(presets) {
 }
 
 /**
- * 설정 UI에 들어갈 문체 조절 슬라이더 HTML을 만듭니다.
+ * 설정 UI에 들어갈 대사 조절 슬라이더 HTML을 만듭니다.
  *
  * min/max/step:
  * - -2: 왼쪽 성향 강함
@@ -693,7 +699,7 @@ function buildStyleSliderHtml(id, label, leftLabel, rightLabel) {
 }
 
 /**
- * 문체 슬라이더의 현재 값을 사람이 읽는 라벨로 바꿉니다.
+ * 대사 조절 슬라이더의 현재 값을 사람이 읽는 라벨로 바꿉니다.
  */
 function getStyleControlLabel(presets, value) {
   const normalizedValue = normalizeStyleControlValue(value);
@@ -701,7 +707,7 @@ function getStyleControlLabel(presets, value) {
 }
 
 /**
- * 문체 슬라이더 옆의 현재값 라벨을 갱신합니다.
+ * 대사 조절 슬라이더 옆의 현재값 라벨을 갱신합니다.
  */
 function updateStyleSliderLabel(panel, slider, presets) {
   const label = panel.querySelector(`[data-ghostwriter-style-label-for="${slider.id}"]`);
@@ -915,7 +921,7 @@ function getStyleScopeChatKey() {
 }
 
 /**
- * 현재 채팅에서 문체 조절값을 채팅 전용으로 쓸지 확인합니다.
+ * 현재 채팅에서 대사 조절값을 채팅 전용으로 쓸지 확인합니다.
  */
 function isChatOnlyStyleScopeEnabled() {
   const settings = getSettings();
@@ -931,7 +937,7 @@ function setChatOnlyStyleScopeEnabled(isEnabled) {
 }
 
 /**
- * extensionSettings.styleProfiles 안에서 쓸 안정적인 문체 프로필 키입니다.
+ * extensionSettings.styleProfiles 안에서 쓸 안정적인 대사 톤 프로필 키입니다.
  *
  * 기본값은 페르소나별 저장입니다.
  * "이 채팅에만 적용"을 켠 경우에만 채팅+페르소나 전용 키를 씁니다.
@@ -1005,7 +1011,7 @@ function migrateLegacyStyleControlsIfNeeded(profileKey) {
 }
 
 /**
- * 현재 페르소나 또는 현재 채팅 전용 문체 조절값을 불러옵니다.
+ * 현재 페르소나 또는 현재 채팅 전용 대사 조절값을 불러옵니다.
  */
 function loadStyleControls() {
   const settings = getSettings();
@@ -1021,7 +1027,7 @@ function loadStyleControls() {
 }
 
 /**
- * 현재 페르소나 또는 현재 채팅 전용 문체 조절값을 저장합니다.
+ * 현재 페르소나 또는 현재 채팅 전용 대사 조절값을 저장합니다.
  */
 function saveStyleControls(styleControls) {
   const settings = getSettings();
@@ -1035,7 +1041,7 @@ function saveStyleControls(styleControls) {
 }
 
 /**
- * 채팅/페르소나 전환 시 화면의 임시 문체 상태를 저장된 값으로 다시 맞춥니다.
+ * 채팅/페르소나 전환 시 화면의 임시 대사 톤 상태를 저장된 값으로 다시 맞춥니다.
  */
 function resetPendingStyleControls(styleControls = loadStyleControls()) {
   pendingStyleControls = {
@@ -1104,6 +1110,17 @@ function saveHistoryPanelClosed(isClosed) {
 }
 
 /**
+ * 현재 채팅의 히스토리 패널을 닫고 닫힘 상태를 저장합니다.
+ *
+ * 닫기 버튼, 전송 버튼, Enter 전송이 같은 동작을 공유하도록 분리했습니다.
+ */
+function closeHistoryPanel() {
+  isHistoryPanelClosed = true;
+  saveHistoryPanelClosed(true);
+  document.querySelector(`#${EXTENSION_NAME}-history`)?.classList.add('ghostwriter-history-hidden');
+}
+
+/**
  * 대필이 성공했을 때 새 기록을 추가합니다.
  *
  * id는 시간값과 랜덤 문자열을 섞어서 만듭니다.
@@ -1144,11 +1161,11 @@ function getPresetValue(presets, presetKey, fallbackKey) {
 }
 
 /**
- * 말투/분위기 슬라이더 값을 실제 프롬프트 문장으로 바꿉니다.
+ * 대사 말투/분위기 슬라이더 값을 실제 프롬프트 문장으로 바꿉니다.
  *
  * 중요한 원칙:
  * - 슬라이더 중앙값 0은 "무색무취 기본값"이 아니라 "{{user}} 페르소나 기준 유지"입니다.
- * - 슬라이더는 페르소나를 덮어쓰지 않고, 페르소나 문체를 좌우로 조금 조절합니다.
+ * - 슬라이더는 페르소나를 덮어쓰지 않고, 대사 톤만 좌우로 조금 조절합니다.
  */
 function buildStyleControlsPrompt() {
   const styleControls = loadStyleControls();
@@ -1156,10 +1173,12 @@ function buildStyleControlsPrompt() {
   const moodStyle = MOOD_STYLE_PROMPTS[styleControls.moodStyle] || MOOD_STYLE_PROMPTS[0];
 
   return [
-    'STYLE CONTROLS:',
-    `- Speech style control: ${speechStyle.prompt}`,
-    `- Mood control: ${moodStyle.prompt}`,
-    '- Treat these controls as gentle adjustments to the {{user}} persona, not replacements.',
+    'DIALOGUE TONE CONTROLS:',
+    `- Dialogue speech style control: ${speechStyle.prompt}`,
+    `- Dialogue mood control: ${moodStyle.prompt}`,
+    '- Apply these controls only to direct dialogue, converted indirect dialogue, spoken lines, and very close dialogue tags.',
+    '- Do not significantly change narration style, sentence density, descriptive prose, or action narration because of these dialogue controls.',
+    '- Treat these controls as gentle adjustments to the {{user}} persona dialogue, not replacements.',
     '- If a control conflicts with the {{user}} persona sheet, keep the persona recognizable and apply the control subtly.'
   ].join('\n');
 }
@@ -1660,9 +1679,7 @@ async function handleHistoryPanelClick(event) {
   const translateButton = event.target.closest('[data-ghostwriter-history-translate]');
 
   if (closeButton) {
-    isHistoryPanelClosed = true;
-    saveHistoryPanelClosed(true);
-    document.querySelector(`#${EXTENSION_NAME}-history`)?.classList.add('ghostwriter-history-hidden');
+    closeHistoryPanel();
     return;
   }
 
@@ -1757,6 +1774,7 @@ function watchChatKeyChanges() {
     const currentStyleControlsKey = getStyleProfileKey();
 
     syncGhostwriterButtonWithSendButton();
+    bindCloseHistoryPanelOnSend();
 
     if (currentChatKey !== lastRenderedChatKey) {
       isHistoryPanelClosed = loadHistoryPanelClosed();
@@ -1767,6 +1785,41 @@ function watchChatKeyChanges() {
       syncStyleControlsPanel();
     }
   }, 2000);
+}
+
+/**
+ * SillyTavern 전송 동작을 감지해 히스토리 패널을 자동으로 닫습니다.
+ *
+ * 감지 대상:
+ * - 전송 버튼 클릭
+ * - #send_form submit
+ * - 입력창 Enter 전송
+ */
+function bindCloseHistoryPanelOnSend() {
+  const sendButton = document.querySelector('#send_but, #send_button, #send');
+  const sendForm = document.querySelector('#send_form');
+  const textarea = getInputTextarea();
+
+  if (sendButton && !sendButton.dataset.ghostwriterCloseBound) {
+    sendButton.dataset.ghostwriterCloseBound = 'true';
+    sendButton.addEventListener('click', closeHistoryPanel);
+  }
+
+  if (sendForm && !sendForm.dataset.ghostwriterCloseBound) {
+    sendForm.dataset.ghostwriterCloseBound = 'true';
+    sendForm.addEventListener('submit', closeHistoryPanel);
+  }
+
+  if (textarea && !textarea.dataset.ghostwriterCloseBound) {
+    textarea.dataset.ghostwriterCloseBound = 'true';
+    textarea.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) {
+        return;
+      }
+
+      closeHistoryPanel();
+    });
+  }
 }
 
 /**
@@ -1958,9 +2011,9 @@ function insertSettingsPanel() {
           대필은 과거형 3인칭으로 고정돼요. 최신 메시지는 장면 참고용이며, 다시 쓰는 대상은 입력창 원문뿐이에요.
         </div>
         <div class="ghostwriter-style-controls">
-          <div class="ghostwriter-style-controls-title">페르소나 문체 조절</div>
+          <div class="ghostwriter-style-controls-title">페르소나 대사 조절</div>
           <div class="ghostwriter-settings-hint">
-            가운데는 현재 {{user}} 페르소나 기준이에요. 기본적으로 페르소나별로 저장되고, 필요하면 현재 채팅에만 따로 저장할 수 있어요.
+            대사와 큰따옴표로 바뀌는 간접 대사에만 적용돼요. 기본적으로 페르소나별로 저장되고, 필요하면 현재 채팅에만 따로 저장할 수 있어요.
           </div>
           <label class="checkbox_label ghostwriter-style-scope" for="${EXTENSION_NAME}-style-chat-only">
             <input id="${EXTENSION_NAME}-style-chat-only" type="checkbox" />
@@ -1976,7 +2029,7 @@ function insertSettingsPanel() {
               data-ghostwriter-save-style="true"
               disabled
             >
-              문체 저장
+              대사 톤 저장
             </button>
           </div>
         </div>
@@ -2066,7 +2119,7 @@ function insertSettingsPanel() {
     resetPendingStyleControls(pendingStyleControls);
     updateStyleSaveState(panel);
     lastRenderedStyleControlsKey = getStyleProfileKey();
-    toastr?.success?.('페르소나 문체 조절값을 저장했어요.');
+    toastr?.success?.('페르소나 대사 조절값을 저장했어요.');
   });
 
   resetButton.addEventListener('click', () => {
@@ -2153,6 +2206,7 @@ jQuery(() => {
   insertGhostwriterButton();
   insertHistoryPanel();
   renderHistoryPanel();
+  bindCloseHistoryPanelOnSend();
   watchChatKeyChanges();
   insertSettingsPanel();
 });
