@@ -1411,6 +1411,9 @@ function insertHistoryPanel() {
         <button type="button" class="ghostwriter-history-reroll" data-ghostwriter-reroll-latest="true" aria-label="직전 입력 재대필" title="직전 입력을 현재 설정으로 다시 대필합니다.">
           <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
         </button>
+        <button type="button" class="ghostwriter-history-restore-latest" data-ghostwriter-restore-latest-original="true" aria-label="직전 원문 복구" title="직전 대필 전 원문을 입력창에 복구합니다.">
+          <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
+        </button>
         <button type="button" class="ghostwriter-history-close" data-ghostwriter-history-close="true" aria-label="대필 기록 패널 닫기">
           <i class="fa-solid fa-xmark" aria-hidden="true"></i>
         </button>
@@ -1451,8 +1454,7 @@ function renderHistoryPanel() {
 
   panel.classList.remove('ghostwriter-history-hidden');
 
-  history.forEach((item, index) => {
-    const isLatestItem = index === 0;
+  history.forEach((item) => {
     const row = document.createElement('div');
     row.className = 'ghostwriter-history-item';
     row.dataset.ghostwriterHistoryId = item.id;
@@ -1495,18 +1497,6 @@ function renderHistoryPanel() {
     apply.title = '이 대필 결과를 입력창에 적용합니다.';
     apply.setAttribute('aria-label', '입력창에 적용');
 
-    const restoreOriginal = document.createElement('button');
-    restoreOriginal.type = 'button';
-    restoreOriginal.className = 'ghostwriter-history-restore';
-    restoreOriginal.dataset.ghostwriterHistoryRestoreOriginal = item.id;
-    restoreOriginal.innerHTML = '<i class="fa-solid fa-rotate-left" aria-hidden="true"></i>';
-    restoreOriginal.title = '대필 전 원문을 입력창에 복구합니다.';
-    restoreOriginal.setAttribute('aria-label', '원문 복구');
-
-    if (!isLatestItem) {
-      restoreOriginal.hidden = true;
-    }
-
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'ghostwriter-history-toggle';
@@ -1517,7 +1507,7 @@ function renderHistoryPanel() {
 
     const itemActions = document.createElement('div');
     itemActions.className = 'ghostwriter-history-item-actions';
-    itemActions.append(translate, restoreOriginal, apply, toggle);
+    itemActions.append(translate, apply, toggle);
 
     const detail = document.createElement('div');
     detail.className = 'ghostwriter-history-detail';
@@ -1657,20 +1647,63 @@ async function rewriteLatestOriginal() {
 }
 
 /**
+ * 가장 최근 대필을 만들기 전 원문을 입력창에 되돌립니다.
+ *
+ * 이 기능은 히스토리의 "최신 항목" 기준입니다.
+ * 그래서 개별 히스토리 카드 안이 아니라 패널 헤더에 두는 편이 더 명확합니다.
+ */
+function restoreLatestOriginal() {
+  const latestItem = loadHistory()[0];
+
+  if (!latestItem?.original) {
+    toastr?.warning?.('복구할 직전 원문이 없어요.');
+    return;
+  }
+
+  setInputTextareaValue(latestItem.original);
+  toastr?.success?.('직전 대필 전 원문을 입력창에 복구했어요.');
+}
+
+/**
+ * 히스토리 항목 하나를 펼치거나 접습니다.
+ *
+ * 토글 버튼을 눌러도, 히스토리 카드 자체를 눌러도 같은 함수를 사용합니다.
+ * 이렇게 해두면 아이콘, aria-label, 펼침 상태가 서로 어긋나지 않습니다.
+ */
+function toggleHistoryItem(row) {
+  if (!row) {
+    return;
+  }
+
+  const toggleButton = row.querySelector('[data-ghostwriter-history-toggle]');
+  const isExpanded = row.classList.toggle('ghostwriter-history-item-expanded');
+
+  if (toggleButton) {
+    toggleButton.innerHTML = isExpanded
+      ? '<i class="fa-solid fa-angle-up" aria-hidden="true"></i>'
+      : '<i class="fa-solid fa-angle-down" aria-hidden="true"></i>';
+    toggleButton.setAttribute('aria-label', isExpanded ? '대필 결과 접기' : '대필 결과 전체보기');
+    toggleButton.setAttribute('aria-expanded', String(Boolean(isExpanded)));
+  }
+}
+
+/**
  * 히스토리 패널 안의 버튼을 처리합니다.
  *
  * 동작:
  * - 닫기: 패널을 숨기고 현재 채팅에 닫힘 상태를 저장합니다.
- * - 토글 아이콘: 한 줄로 줄인 대필 결과를 전체 문장으로 펼치거나 접습니다.
+ * - 재대필/복구: 최신 히스토리 항목의 원문을 기준으로 처리합니다.
+ * - 토글 아이콘 또는 카드 클릭: 한 줄로 줄인 대필 결과를 전체 문장으로 펼치거나 접습니다.
  * - 적용 아이콘: 펼친 항목의 대필 결과를 입력창에 다시 적용합니다.
  */
 async function handleHistoryPanelClick(event) {
   const closeButton = event.target.closest('[data-ghostwriter-history-close]');
   const rerollLatestButton = event.target.closest('[data-ghostwriter-reroll-latest]');
+  const restoreLatestButton = event.target.closest('[data-ghostwriter-restore-latest-original]');
   const toggleButton = event.target.closest('[data-ghostwriter-history-toggle]');
   const applyButton = event.target.closest('[data-ghostwriter-history-apply]');
-  const restoreOriginalButton = event.target.closest('[data-ghostwriter-history-restore-original]');
   const translateButton = event.target.closest('[data-ghostwriter-history-translate]');
+  const historyItemRow = event.target.closest('[data-ghostwriter-history-id]');
 
   if (closeButton) {
     closeHistoryPanel();
@@ -1702,15 +1735,13 @@ async function handleHistoryPanelClick(event) {
     return;
   }
 
-  if (toggleButton) {
-    const row = toggleButton.closest('[data-ghostwriter-history-id]');
-    const isExpanded = row?.classList.toggle('ghostwriter-history-item-expanded');
+  if (restoreLatestButton) {
+    restoreLatestOriginal();
+    return;
+  }
 
-    toggleButton.innerHTML = isExpanded
-      ? '<i class="fa-solid fa-angle-up" aria-hidden="true"></i>'
-      : '<i class="fa-solid fa-angle-down" aria-hidden="true"></i>';
-    toggleButton.setAttribute('aria-label', isExpanded ? '대필 결과 접기' : '대필 결과 전체보기');
-    toggleButton.setAttribute('aria-expanded', String(Boolean(isExpanded)));
+  if (toggleButton) {
+    toggleHistoryItem(toggleButton.closest('[data-ghostwriter-history-id]'));
     return;
   }
 
@@ -1738,19 +1769,8 @@ async function handleHistoryPanelClick(event) {
 
     return;
   }
-
-  if (restoreOriginalButton) {
-    const history = loadHistory();
-    const item = history.find((historyItem) => historyItem.id === restoreOriginalButton.dataset.ghostwriterHistoryRestoreOriginal);
-
-    if (!item) {
-      toastr?.warning?.('복구할 원문 기록을 찾지 못했어요.');
-      renderHistoryPanel();
-      return;
-    }
-
-    setInputTextareaValue(item.original);
-    toastr?.success?.('대필 전 원문을 입력창에 복구했어요.');
+  if (historyItemRow && !event.target.closest('button') && !event.target.closest('.ghostwriter-history-detail')) {
+    toggleHistoryItem(historyItemRow);
     return;
   }
 

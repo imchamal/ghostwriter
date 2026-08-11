@@ -296,7 +296,8 @@
 }
 
 .ghostwriter-history-close,
-.ghostwriter-history-reroll {
+.ghostwriter-history-reroll,
+.ghostwriter-history-restore-latest {
   width: 26px;
   min-width: 26px;
   height: 26px;
@@ -313,7 +314,8 @@
 }
 
 .ghostwriter-history-close:hover,
-.ghostwriter-history-reroll:hover {
+.ghostwriter-history-reroll:hover,
+.ghostwriter-history-restore-latest:hover {
   background: transparent;
   color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
 }
@@ -360,6 +362,7 @@
   background: rgba(255, 255, 255, 0.88);
   color: var(--SmartThemeBodyColor, #222);
   text-align: left;
+  cursor: pointer;
 }
 
 .ghostwriter-history-item-header {
@@ -404,7 +407,6 @@
 
 .ghostwriter-history-toggle,
 .ghostwriter-history-translate,
-.ghostwriter-history-restore,
 .ghostwriter-history-apply {
   width: 24px;
   min-width: 24px;
@@ -427,20 +429,17 @@
 
 .ghostwriter-history-toggle:hover,
 .ghostwriter-history-translate:hover,
-.ghostwriter-history-restore:hover,
 .ghostwriter-history-apply:hover {
   background: transparent;
   color: var(--SmartThemeQuoteColor, var(--SmartThemeBodyColor, #222));
 }
 
 .ghostwriter-history-translate,
-.ghostwriter-history-restore,
 .ghostwriter-history-apply {
   display: none;
 }
 
 .ghostwriter-history-item-expanded .ghostwriter-history-translate:not([hidden]),
-.ghostwriter-history-item-expanded .ghostwriter-history-restore:not([hidden]),
 .ghostwriter-history-item-expanded .ghostwriter-history-apply {
   display: inline-flex;
 }
@@ -504,7 +503,6 @@
 
   .ghostwriter-history-toggle,
   .ghostwriter-history-translate,
-  .ghostwriter-history-restore,
   .ghostwriter-history-apply {
     width: 23px;
     min-width: 23px;
