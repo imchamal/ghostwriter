@@ -177,7 +177,8 @@ const CONTEXT_PRESETS = {
 // 음수/양수는 페르소나를 완전히 바꾸는 값이 아니라, 살짝 밀어주는 보조 지시로만 사용합니다.
 const DEFAULT_STYLE_CONTROLS = {
   speechStyle: 0,
-  moodStyle: 0
+  moodStyle: 0,
+  translationEnglishStyle: 0
 };
 
 // 대사 말투 슬라이더 값이 실제 프롬프트에서 어떤 의미인지 정의합니다.
@@ -227,6 +228,32 @@ const MOOD_STYLE_PROMPTS = {
   2: {
     label: '장난기',
     prompt: 'Make only dialogue and dialogue-adjacent attitude more lighthearted, playful, and teasing than the persona baseline.'
+  }
+};
+
+// 번역 후 영어 수준 슬라이더 값이 실제 프롬프트에서 어떤 의미인지 정의합니다.
+// 이 옵션은 출력 언어가 한국어여도 적용됩니다.
+// 이유: 사용자가 한국어로 대필한 뒤 별도 번역 확장으로 영어 전송을 하는 흐름을 쓰기 때문입니다.
+const TRANSLATION_ENGLISH_STYLE_PROMPTS = {
+  '-2': {
+    label: '쉬운 표현',
+    prompt: 'Shape only dialogue so a later English translation will likely use simple, direct English with short sentence structure and minimal idioms.'
+  },
+  '-1': {
+    label: '약간 쉬움',
+    prompt: 'Shape only dialogue so a later English translation will likely use clear, natural, slightly simpler English than the persona baseline.'
+  },
+  0: {
+    label: '기준',
+    prompt: 'Keep dialogue shaped for the {{user}} persona baseline without steering the later English translation level.'
+  },
+  1: {
+    label: '약간 원어민식',
+    prompt: 'Shape only dialogue so a later English translation can sound more fluent and conversational, with light natural phrasing.'
+  },
+  2: {
+    label: '원어민식',
+    prompt: 'Shape only dialogue so a later English translation can sound native-like, idiomatic, and relaxed, without becoming verbose or changing intent.'
   }
 };
 
@@ -732,9 +759,10 @@ function syncStyleControlsPanel() {
 
   const speechStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-speech-style`);
   const moodStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-mood-style`);
+  const translationEnglishStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-translation-english-style`);
   const chatOnlyCheckbox = panel.querySelector(`#${EXTENSION_NAME}-style-chat-only`);
 
-  if (!speechStyleSlider || !moodStyleSlider) {
+  if (!speechStyleSlider || !moodStyleSlider || !translationEnglishStyleSlider) {
     return;
   }
 
@@ -742,11 +770,13 @@ function syncStyleControlsPanel() {
   resetPendingStyleControls(styleControls);
   speechStyleSlider.value = styleControls.speechStyle;
   moodStyleSlider.value = styleControls.moodStyle;
+  translationEnglishStyleSlider.value = styleControls.translationEnglishStyle;
   if (chatOnlyCheckbox) {
     chatOnlyCheckbox.checked = isChatOnlyStyleScopeEnabled();
   }
   updateStyleSliderLabel(panel, speechStyleSlider, SPEECH_STYLE_PROMPTS);
   updateStyleSliderLabel(panel, moodStyleSlider, MOOD_STYLE_PROMPTS);
+  updateStyleSliderLabel(panel, translationEnglishStyleSlider, TRANSLATION_ENGLISH_STYLE_PROMPTS);
   updateStyleSaveState(panel);
   lastRenderedStyleControlsKey = getStyleProfileKey();
 }
@@ -762,7 +792,7 @@ function syncStyleControlsPanel() {
  * - outputLanguage: 출력 언어
  * - lengthPreset: 길이
  * - contextPreset: 참고할 최신 메시지
- * - speechStyle / moodStyle: 현재 채팅 + 현재 유저 페르소나의 말투/분위기 슬라이더
+ * - speechStyle / moodStyle / translationEnglishStyle: 현재 채팅 + 현재 유저 페르소나의 대사 조절 슬라이더
  */
 function resetRewriteOptions(selects) {
   const settings = getSettings();
@@ -779,8 +809,10 @@ function resetRewriteOptions(selects) {
   selects.contextSelect.value = settings.contextPreset;
   selects.speechStyleSlider.value = DEFAULT_STYLE_CONTROLS.speechStyle;
   selects.moodStyleSlider.value = DEFAULT_STYLE_CONTROLS.moodStyle;
+  selects.translationEnglishStyleSlider.value = DEFAULT_STYLE_CONTROLS.translationEnglishStyle;
   updateStyleSliderLabel(selects.panel, selects.speechStyleSlider, SPEECH_STYLE_PROMPTS);
   updateStyleSliderLabel(selects.panel, selects.moodStyleSlider, MOOD_STYLE_PROMPTS);
+  updateStyleSliderLabel(selects.panel, selects.translationEnglishStyleSlider, TRANSLATION_ENGLISH_STYLE_PROMPTS);
   updateStyleSaveState(selects.panel);
 
   saveSettings();
@@ -1001,6 +1033,7 @@ function migrateLegacyStyleControlsIfNeeded(profileKey) {
     settings.styleProfiles[profileKey] = {
       speechStyle: normalizeStyleControlValue(parsedControls.speechStyle),
       moodStyle: normalizeStyleControlValue(parsedControls.moodStyle),
+      translationEnglishStyle: normalizeStyleControlValue(parsedControls.translationEnglishStyle ?? DEFAULT_STYLE_CONTROLS.translationEnglishStyle),
       updatedAt: Date.now(),
       migratedFrom: 'localStorage'
     };
@@ -1022,7 +1055,8 @@ function loadStyleControls() {
 
   return {
     speechStyle: normalizeStyleControlValue(savedControls.speechStyle ?? DEFAULT_STYLE_CONTROLS.speechStyle),
-    moodStyle: normalizeStyleControlValue(savedControls.moodStyle ?? DEFAULT_STYLE_CONTROLS.moodStyle)
+    moodStyle: normalizeStyleControlValue(savedControls.moodStyle ?? DEFAULT_STYLE_CONTROLS.moodStyle),
+    translationEnglishStyle: normalizeStyleControlValue(savedControls.translationEnglishStyle ?? DEFAULT_STYLE_CONTROLS.translationEnglishStyle)
   };
 }
 
@@ -1035,6 +1069,7 @@ function saveStyleControls(styleControls) {
   settings.styleProfiles[profileKey] = {
     speechStyle: normalizeStyleControlValue(styleControls.speechStyle),
     moodStyle: normalizeStyleControlValue(styleControls.moodStyle),
+    translationEnglishStyle: normalizeStyleControlValue(styleControls.translationEnglishStyle),
     updatedAt: Date.now()
   };
   saveSettingsNow();
@@ -1046,7 +1081,8 @@ function saveStyleControls(styleControls) {
 function resetPendingStyleControls(styleControls = loadStyleControls()) {
   pendingStyleControls = {
     speechStyle: normalizeStyleControlValue(styleControls.speechStyle),
-    moodStyle: normalizeStyleControlValue(styleControls.moodStyle)
+    moodStyle: normalizeStyleControlValue(styleControls.moodStyle),
+    translationEnglishStyle: normalizeStyleControlValue(styleControls.translationEnglishStyle)
   };
   isStyleControlsDirty = false;
 }
@@ -1171,12 +1207,17 @@ function buildStyleControlsPrompt() {
   const styleControls = loadStyleControls();
   const speechStyle = SPEECH_STYLE_PROMPTS[styleControls.speechStyle] || SPEECH_STYLE_PROMPTS[0];
   const moodStyle = MOOD_STYLE_PROMPTS[styleControls.moodStyle] || MOOD_STYLE_PROMPTS[0];
+  const translationEnglishStyle = TRANSLATION_ENGLISH_STYLE_PROMPTS[styleControls.translationEnglishStyle] || TRANSLATION_ENGLISH_STYLE_PROMPTS[0];
 
   return [
     'DIALOGUE TONE CONTROLS:',
     `- Dialogue speech style control: ${speechStyle.prompt}`,
     `- Dialogue mood control: ${moodStyle.prompt}`,
+    `- Later English translation level control: ${translationEnglishStyle.prompt}`,
     '- Apply these controls only to direct dialogue, converted indirect dialogue, spoken lines, and very close dialogue tags.',
+    '- The later English translation level control applies even when the selected output language is Korean, because the Korean dialogue may later be translated into English by another extension.',
+    '- When outputting Korean, keep the Korean dialogue natural. Do not make it sound stiff, childish, translated, or foreign just to steer the later English translation.',
+    '- Do not add deliberate grammar mistakes, stereotypes, or exaggerated broken English for lower English levels.',
     '- Do not significantly change narration style, sentence density, descriptive prose, or action narration because of these dialogue controls.',
     '- Treat these controls as gentle adjustments to the {{user}} persona dialogue, not replacements.',
     '- If a control conflicts with the {{user}} persona sheet, keep the persona recognizable and apply the control subtly.'
@@ -2057,6 +2098,10 @@ function insertSettingsPanel() {
           </label>
           ${buildStyleSliderHtml(`${EXTENSION_NAME}-speech-style`, '말투', '격식', '구어체')}
           ${buildStyleSliderHtml(`${EXTENSION_NAME}-mood-style`, '분위기', '진지함', '장난기')}
+          ${buildStyleSliderHtml(`${EXTENSION_NAME}-translation-english-style`, '번역 후 영어 수준', '쉬운 표현', '원어민식')}
+          <div class="ghostwriter-settings-hint">
+            한국어로 대필해도, 나중에 영어로 번역되기 쉬운 대사 구조를 유도해요. 일반 나레이션에는 적용하지 않아요.
+          </div>
           <div class="ghostwriter-style-save-row">
             <span class="ghostwriter-style-save-state" data-ghostwriter-style-save-state>저장됨</span>
             <button
@@ -2065,7 +2110,7 @@ function insertSettingsPanel() {
               data-ghostwriter-save-style="true"
               disabled
             >
-              대사 톤 저장
+              대사 조절 저장
             </button>
           </div>
         </div>
@@ -2093,6 +2138,7 @@ function insertSettingsPanel() {
   const chatOnlyStyleCheckbox = panel.querySelector(`#${EXTENSION_NAME}-style-chat-only`);
   const speechStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-speech-style`);
   const moodStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-mood-style`);
+  const translationEnglishStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-translation-english-style`);
   const saveStyleButton = panel.querySelector('[data-ghostwriter-save-style]');
   const resetButton = panel.querySelector('[data-ghostwriter-reset-options]');
 
@@ -2150,6 +2196,15 @@ function insertSettingsPanel() {
     updateStyleSaveState(panel);
   });
 
+  translationEnglishStyleSlider.value = styleControls.translationEnglishStyle;
+  updateStyleSliderLabel(panel, translationEnglishStyleSlider, TRANSLATION_ENGLISH_STYLE_PROMPTS);
+  translationEnglishStyleSlider.addEventListener('input', () => {
+    pendingStyleControls.translationEnglishStyle = normalizeStyleControlValue(translationEnglishStyleSlider.value);
+    isStyleControlsDirty = true;
+    updateStyleSliderLabel(panel, translationEnglishStyleSlider, TRANSLATION_ENGLISH_STYLE_PROMPTS);
+    updateStyleSaveState(panel);
+  });
+
   saveStyleButton.addEventListener('click', () => {
     saveStyleControls(pendingStyleControls);
     resetPendingStyleControls(pendingStyleControls);
@@ -2166,7 +2221,8 @@ function insertSettingsPanel() {
       lengthSelect,
       contextSelect,
       speechStyleSlider,
-      moodStyleSlider
+      moodStyleSlider,
+      translationEnglishStyleSlider
     });
   });
 
