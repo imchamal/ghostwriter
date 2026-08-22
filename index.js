@@ -124,6 +124,18 @@ const LANGUAGE_PRESETS = {
   }
 };
 
+// 히스토리/미리보기 번역에 사용할 공급자입니다.
+// ai: 기존처럼 SillyTavern 연결 프로필을 사용합니다.
+// googleFree: 공식 Cloud API가 아닌 무료 웹 번역 엔드포인트를 사용하므로, 실패할 수 있는 실험 옵션입니다.
+const TRANSLATION_PROVIDER_PRESETS = {
+  ai: {
+    label: 'AI 번역(연결 프로필)'
+  },
+  googleFree: {
+    label: 'Google 무료 번역'
+  }
+};
+
 // 길이 프리셋입니다.
 // 짧게/보통/길게가 체감상 확실히 다르도록 문장 수와 확장 범위를 명확히 나눕니다.
 const LENGTH_PRESETS = {
@@ -271,12 +283,14 @@ const MAX_HISTORY_ITEMS = 3;
 // outputLanguage: 결과 언어를 고르는 값입니다.
 // lengthPreset: 결과 길이를 고르는 값입니다.
 // contextPreset: 최신 메시지를 몇 개 참고할지 고르는 값입니다.
+// translationProvider: 히스토리/미리보기 번역에 사용할 방식입니다.
 const DEFAULT_SETTINGS = {
   profileName: '',
   tonePreset: 'balanced',
   outputLanguage: 'ko',
   lengthPreset: 'medium',
   contextPreset: 'normal',
+  translationProvider: 'ai',
   styleProfiles: {},
   styleScopeByChat: {}
 };
@@ -792,6 +806,7 @@ function syncStyleControlsPanel() {
  * - outputLanguage: 출력 언어
  * - lengthPreset: 길이
  * - contextPreset: 참고할 최신 메시지
+ * - translationProvider: 히스토리/미리보기 번역 공급자
  * - speechStyle / moodStyle / translationEnglishStyle: 현재 채팅 + 현재 유저 페르소나의 대사 조절 슬라이더
  */
 function resetRewriteOptions(selects) {
@@ -800,6 +815,7 @@ function resetRewriteOptions(selects) {
   settings.outputLanguage = DEFAULT_SETTINGS.outputLanguage;
   settings.lengthPreset = DEFAULT_SETTINGS.lengthPreset;
   settings.contextPreset = DEFAULT_SETTINGS.contextPreset;
+  settings.translationProvider = DEFAULT_SETTINGS.translationProvider;
   saveStyleControls(DEFAULT_STYLE_CONTROLS);
   resetPendingStyleControls(DEFAULT_STYLE_CONTROLS);
 
@@ -807,6 +823,7 @@ function resetRewriteOptions(selects) {
   selects.languageSelect.value = settings.outputLanguage;
   selects.lengthSelect.value = settings.lengthPreset;
   selects.contextSelect.value = settings.contextPreset;
+  selects.translationProviderSelect.value = settings.translationProvider;
   selects.speechStyleSlider.value = DEFAULT_STYLE_CONTROLS.speechStyle;
   selects.moodStyleSlider.value = DEFAULT_STYLE_CONTROLS.moodStyle;
   selects.translationEnglishStyleSlider.value = DEFAULT_STYLE_CONTROLS.translationEnglishStyle;
@@ -1422,6 +1439,104 @@ function buildTranslateToKoreanPrompt(text) {
 }
 
 /**
+ * 번역 실패를 구분하기 위한 전용 오류를 만듭니다.
+ *
+ * AI 대필 실패, 연결 프로필 실패와 구분해서 사용자에게 더 정확한 문구를 보여주기 위해 사용합니다.
+ */
+function createTranslationError(message) {
+  const error = new Error(message);
+  error.name = 'GhostwriterTranslationError';
+  return error;
+}
+
+/**
+ * 기존 AI 연결 프로필을 사용해 영어 대필 결과를 한국어로 번역합니다.
+ *
+ * 이 방식은 RP 문맥과 말투 보존이 비교적 좋지만, 현재 선택된 API 비용을 사용합니다.
+ */
+async function translateToKoreanWithAi(text) {
+  const context = getSillyTavernContext();
+
+  if (!context?.generateRaw) {
+    throw createTranslationError('SillyTavern 생성 API를 찾지 못했어요.');
+  }
+
+  return runWithGhostwriterProfile(() => context.generateRaw({
+    systemPrompt: buildTranslateToKoreanSystemPrompt(),
+    prompt: buildTranslateToKoreanPrompt(text)
+  }));
+}
+
+/**
+ * Google 무료 웹 번역 엔드포인트 응답에서 번역문만 꺼냅니다.
+ *
+ * 응답 구조는 공식 보장 API가 아니므로, 형식이 바뀌면 실패할 수 있습니다.
+ */
+function parseGoogleFreeTranslateResponse(responseJson) {
+  const translatedParts = Array.isArray(responseJson?.[0])
+    ? responseJson[0].map((part) => Array.isArray(part) ? part[0] : '').filter(Boolean)
+    : [];
+
+  return translatedParts.join('').trim();
+}
+
+/**
+ * Google 무료 웹 번역으로 영어 대필 결과를 한국어로 번역합니다.
+ *
+ * 공식 Cloud Translation API가 아니라서 API 키는 필요 없지만,
+ * CORS, 요청 제한, 응답 형식 변경 때문에 언제든 실패할 수 있는 실험 옵션입니다.
+ */
+async function translateToKoreanWithGoogleFree(text) {
+  const url = new URL('https://translate.googleapis.com/translate_a/single');
+  url.searchParams.set('client', 'gtx');
+  url.searchParams.set('sl', 'auto');
+  url.searchParams.set('tl', 'ko');
+  url.searchParams.set('dt', 't');
+  url.searchParams.set('q', text);
+
+  let response;
+
+  try {
+    response = await fetch(url.toString());
+  } catch (error) {
+    throw createTranslationError('Google 무료 번역에 연결하지 못했어요. 잠시 후 다시 시도하거나 AI 번역으로 바꿔 주세요.');
+  }
+
+  if (!response.ok) {
+    throw createTranslationError(`Google 무료 번역 요청이 실패했어요. HTTP ${response.status}`);
+  }
+
+  let responseJson;
+
+  try {
+    responseJson = await response.json();
+  } catch (error) {
+    throw createTranslationError('Google 무료 번역 응답을 읽지 못했어요. AI 번역으로 바꿔 다시 시도해 주세요.');
+  }
+
+  const translatedText = parseGoogleFreeTranslateResponse(responseJson);
+
+  if (!translatedText) {
+    throw createTranslationError('Google 무료 번역 결과가 비어 있어요. AI 번역으로 바꿔 다시 시도해 주세요.');
+  }
+
+  return translatedText;
+}
+
+/**
+ * 설정에서 선택한 번역 공급자로 한국어 번역을 실행합니다.
+ */
+async function translateToKorean(text) {
+  const provider = getSettings().translationProvider;
+
+  if (provider === 'googleFree') {
+    return translateToKoreanWithGoogleFree(text);
+  }
+
+  return translateToKoreanWithAi(text);
+}
+
+/**
  * 입력창 바로 위에 들어갈 히스토리 패널을 만듭니다.
  *
  * 큰 팝업 대신 입력창이 위로 살짝 확장된 것처럼 보이게 하려면,
@@ -1623,17 +1738,7 @@ async function translateHistoryItem(itemId) {
     return;
   }
 
-  const context = getSillyTavernContext();
-
-  if (!context?.generateRaw) {
-    toastr?.error?.('SillyTavern 생성 API를 찾지 못했어요.');
-    return;
-  }
-
-  const translatedText = await runWithGhostwriterProfile(() => context.generateRaw({
-    systemPrompt: buildTranslateToKoreanSystemPrompt(),
-    prompt: buildTranslateToKoreanPrompt(item.rewritten)
-  }));
+  const translatedText = await translateToKorean(item.rewritten);
 
   if (typeof translatedText !== 'string' || !translatedText.trim()) {
     toastr?.warning?.('번역 결과가 비어 있어요.');
@@ -1799,6 +1904,8 @@ async function handleHistoryPanelClick(event) {
       console.error(`[${EXTENSION_NAME}] history action failed`, error);
 
       if (error?.name === 'GhostwriterProfileError') {
+        toastr?.error?.(error.message);
+      } else if (error?.name === 'GhostwriterTranslationError') {
         toastr?.error?.(error.message);
       } else {
         toastr?.error?.('히스토리 작업 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
@@ -2084,6 +2191,15 @@ function insertSettingsPanel() {
             ${buildPresetOptions(CONTEXT_PRESETS)}
           </select>
         </label>
+        <label class="ghostwriter-settings-field" for="${EXTENSION_NAME}-translation-provider">
+          <span>히스토리 번역 방식</span>
+          <select id="${EXTENSION_NAME}-translation-provider" class="text_pole">
+            ${buildPresetOptions(TRANSLATION_PROVIDER_PRESETS)}
+          </select>
+        </label>
+        <div class="ghostwriter-settings-hint">
+          Google 무료 번역은 API 키 없이 빠르게 확인할 수 있지만, 공식 보장 API가 아니라 실패할 수 있어요.
+        </div>
         <div class="ghostwriter-settings-hint">
           대필은 과거형 3인칭으로 고정돼요. 최신 메시지는 장면 참고용이며, 다시 쓰는 대상은 입력창 원문뿐이에요.
         </div>
@@ -2135,6 +2251,7 @@ function insertSettingsPanel() {
   const languageSelect = panel.querySelector(`#${EXTENSION_NAME}-output-language`);
   const lengthSelect = panel.querySelector(`#${EXTENSION_NAME}-length-preset`);
   const contextSelect = panel.querySelector(`#${EXTENSION_NAME}-context-preset`);
+  const translationProviderSelect = panel.querySelector(`#${EXTENSION_NAME}-translation-provider`);
   const chatOnlyStyleCheckbox = panel.querySelector(`#${EXTENSION_NAME}-style-chat-only`);
   const speechStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-speech-style`);
   const moodStyleSlider = panel.querySelector(`#${EXTENSION_NAME}-mood-style`);
@@ -2168,6 +2285,12 @@ function insertSettingsPanel() {
   contextSelect.value = CONTEXT_PRESETS[settings.contextPreset] ? settings.contextPreset : DEFAULT_SETTINGS.contextPreset;
   contextSelect.addEventListener('change', () => {
     getSettings().contextPreset = contextSelect.value;
+    saveSettings();
+  });
+
+  translationProviderSelect.value = TRANSLATION_PROVIDER_PRESETS[settings.translationProvider] ? settings.translationProvider : DEFAULT_SETTINGS.translationProvider;
+  translationProviderSelect.addEventListener('change', () => {
+    getSettings().translationProvider = translationProviderSelect.value;
     saveSettings();
   });
 
@@ -2220,6 +2343,7 @@ function insertSettingsPanel() {
       languageSelect,
       lengthSelect,
       contextSelect,
+      translationProviderSelect,
       speechStyleSlider,
       moodStyleSlider,
       translationEnglishStyleSlider
