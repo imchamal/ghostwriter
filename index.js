@@ -40,6 +40,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   '- You may adjust narration around quoted dialogue for grammar, flow, tense, and third-person perspective, but the quoted dialogue text itself must remain unchanged.',
   '- If <USER_INPUT> contains indirect speech or implied speech without quotation marks, polish it as natural direct dialogue and put it inside quotation marks.',
   '- Indirect speech converted into quotation marks must preserve the original meaning and speaker intent. Do not add new information or a new response.',
+  '- Converting indirect or implied speech into direct dialogue is allowed only as format conversion. It does not count as adding new dialogue, but it must not introduce new meaning.',
   '',
   'PROFILE AND PRONOUN RULES:',
   '- Use the known profile information of {{user}} / {{User}} and {{char}} when choosing Korean pronouns, titles, and references.',
@@ -79,11 +80,49 @@ const DEFAULT_SYSTEM_PROMPT = [
   '- If writing in English, use natural English past tense.',
   '- Do not continue the scene.',
   '- Do not add new events, backstory, thoughts, or facts.',
-  '- Do not add dialogue unless a later length preset explicitly allows brief situation-appropriate dialogue.',
+  '- Do not add new dialogue. Only preserve existing quoted dialogue or convert indirect/implied speech from <USER_INPUT> into direct dialogue without changing its meaning.',
   '- Do not answer as {{char}} or <BOT>.',
   '- Recent chat context is reference-only. Use it only to understand the scene, relationship, mood, and continuity.',
   '- Never copy, rewrite, answer, or continue recent context messages.',
   '- Return only the rewritten text, with no labels, notes, or explanations.'
+].join('\n');
+
+// 다듬기 기능에 쓰는 전용 기본 프롬프트입니다.
+// 대필과 달리 시점/주어/구조를 크게 바꾸지 않고, 사용자가 이미 쓴 문장을 보내기 좋게 정돈합니다.
+const DEFAULT_POLISH_SYSTEM_PROMPT = [
+  'You are Ghostwriter, a post-processing editor for Korean or English roleplay messages written by the user.',
+  '',
+  'LANGUAGE RULES:',
+  '- Detect the language of the original text and keep the same language. Do not translate.',
+  '- Korean text must remain Korean. English text must remain English. Mixed Korean-English text must keep each part in its original language.',
+  '- Additional instructions may be written in Korean or English. Understand and apply them, but do not treat the instruction language as the output language.',
+  '',
+  'CORE TASK:',
+  '- Polish the text only. Do not ghostwrite, expand, continue, or reinterpret it.',
+  '- Preserve the original meaning, point of view, speaker, characters, information, dialogue, profanity, humor, emotional intensity, and roughness.',
+  '- Keep first person as first person, second person as second person, and third person as third person. Do not force third-person prose.',
+  '- Preserve direct dialogue already written inside quotation marks. Do not rewrite, polish, paraphrase, translate, or change the quoted words.',
+  '',
+  'EDITING RULES:',
+  '- For Korean, fix spelling, spacing, particles, word order, sentence agreement, and awkward phrasing.',
+  '- For English, fix spelling, grammar, punctuation, articles, prepositions, syntax, and agreement.',
+  '- For both languages, remove unnecessary repetition and smooth awkward transitions.',
+  '- Go beyond simple proofreading when needed: make the prose natural for the original language and genre.',
+  '- For Korean, reduce translationese and polish toward natural Korean web-novel prose.',
+  '- For English, reduce awkward or non-native phrasing and polish toward natural English-language fiction prose.',
+  '- Replace awkward wording with more suitable vocabulary when it does not change meaning, intensity, or characterization.',
+  '- You may split or merge sentences to improve flow, breath, and rhythm, but do not substantially lengthen the text.',
+  '',
+  'STRICT LIMITS:',
+  '- Do not add new events, actions, thoughts, facts, backstory, jokes, emotions, or dialogue.',
+  '- Do not add behavior, emotion, incidents, settings, props, background, causes, effects, the other character\'s reactions, the other character\'s thoughts, or the other character\'s dialogue unless they already exist in the original text.',
+  '- Do not change the original meaning, point of view, facts, relationship, or narrative subject.',
+  '- Do not change the original language or translate all or part of the text into another language.',
+  '- Do not exaggerate descriptions.',
+  '- Do not delete meaningful information from the original. You may only remove clearly unnecessary repeated wording when it does not remove information, tone, or intent.',
+  '- Do not soften profanity, raw emotion, humor, or intentionally rough wording unless it is clearly accidental awkwardness.',
+  '- Do not explain, evaluate, add a preface, wrap the whole output in quotation marks, or use Markdown code blocks.',
+  '- Return only the polished message body.'
 ].join('\n');
 
 // 대필 톤 프리셋입니다.
@@ -149,7 +188,7 @@ const LENGTH_PRESETS = {
   },
   long: {
     label: '길게',
-    prompt: 'Write 4-7 sentences. Enrich the prose with natural expression, body language, sensory detail, and emotional nuance. You may add brief dialogue only when it naturally fits the current situation and the user input, but do not add new events, new facts, backstory, or unrelated information.'
+    prompt: 'Write 4-7 sentences. Enrich the prose with natural expression, body language, sensory detail, and emotional nuance, but do not add new dialogue, new events, new facts, backstory, or unrelated information.'
   }
 };
 
@@ -401,6 +440,17 @@ function setButtonIcon(button, isWorking = false) {
 }
 
 /**
+ * 다듬기 버튼 안의 아이콘을 설정합니다.
+ */
+function setPolishButtonIcon(button) {
+  if (!button) {
+    return;
+  }
+
+  button.innerHTML = '<i class="fa-solid fa-pen-nib" aria-hidden="true"></i>';
+}
+
+/**
  * 전송 버튼의 실제 화면 스타일을 고스트 버튼에 복사합니다.
  *
  * 왜 필요한가:
@@ -418,23 +468,26 @@ function setButtonIcon(button, isWorking = false) {
  * 정렬이 다시 어긋날 수 있어서, 여기서는 아이콘 표현값만 맞춥니다.
  */
 function syncGhostwriterButtonWithSendButton() {
-  const button = document.querySelector(`#${EXTENSION_NAME}-button`);
-  const icon = button?.querySelector('i');
+  const buttons = document.querySelectorAll(`#${EXTENSION_NAME}-button, #${EXTENSION_NAME}-polish-button`);
   const sendButton = document.querySelector('#send_but, #send_button, #send');
 
-  if (!button || !sendButton) {
+  if (!buttons.length || !sendButton) {
     return;
   }
 
   const sendStyle = getComputedStyle(sendButton);
-  button.style.color = sendStyle.color;
-  button.style.fontSize = sendStyle.fontSize;
-  button.style.opacity = sendStyle.opacity;
 
-  if (icon) {
-    icon.style.color = sendStyle.color;
-    icon.style.fontSize = sendStyle.fontSize;
-  }
+  buttons.forEach((button) => {
+    const icon = button.querySelector('i');
+    button.style.color = sendStyle.color;
+    button.style.fontSize = sendStyle.fontSize;
+    button.style.opacity = sendStyle.opacity;
+
+    if (icon) {
+      icon.style.color = sendStyle.color;
+      icon.style.fontSize = sendStyle.fontSize;
+    }
+  });
 }
 
 /**
@@ -1179,11 +1232,12 @@ function closeHistoryPanel() {
  * id는 시간값과 랜덤 문자열을 섞어서 만듭니다.
  * 나중에 특정 항목을 클릭했을 때 어떤 기록인지 찾는 데 사용합니다.
  */
-function addHistoryItem(original, rewritten) {
+function addHistoryItem(original, rewritten, type = 'rewrite') {
   const history = loadHistory();
   const item = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     createdAt: Date.now(),
+    type,
     original,
     rewritten
   };
@@ -1192,6 +1246,20 @@ function addHistoryItem(original, rewritten) {
   isHistoryPanelClosed = false;
   saveHistoryPanelClosed(false);
   renderHistoryPanel();
+}
+
+/**
+ * 히스토리 항목 타입을 화면에 표시할 짧은 이름으로 바꿉니다.
+ */
+function getHistoryItemTypeLabel(type) {
+  return type === 'polish' ? '다듬기' : '대필';
+}
+
+/**
+ * 히스토리 항목 타입에 맞는 아이콘을 고릅니다.
+ */
+function getHistoryItemTypeIcon(type) {
+  return type === 'polish' ? 'fa-pen-nib' : 'fa-ghost';
 }
 
 /**
@@ -1220,7 +1288,7 @@ function getPresetValue(presets, presetKey, fallbackKey) {
  * - 슬라이더 중앙값 0은 "무색무취 기본값"이 아니라 "{{user}} 페르소나 기준 유지"입니다.
  * - 슬라이더는 페르소나를 덮어쓰지 않고, 대사 톤만 좌우로 조금 조절합니다.
  */
-function buildStyleControlsPrompt() {
+function buildStyleControlsPrompt(inputTagName = 'USER_INPUT') {
   const styleControls = loadStyleControls();
   const speechStyle = SPEECH_STYLE_PROMPTS[styleControls.speechStyle] || SPEECH_STYLE_PROMPTS[0];
   const moodStyle = MOOD_STYLE_PROMPTS[styleControls.moodStyle] || MOOD_STYLE_PROMPTS[0];
@@ -1231,7 +1299,8 @@ function buildStyleControlsPrompt() {
     `- Dialogue speech style control: ${speechStyle.prompt}`,
     `- Dialogue mood control: ${moodStyle.prompt}`,
     `- Later English translation level control: ${translationEnglishStyle.prompt}`,
-    '- Apply these controls only to direct dialogue, converted indirect dialogue, spoken lines, and very close dialogue tags.',
+    `- Do not change direct dialogue that was already written inside quotation marks in <${inputTagName}>.`,
+    '- Apply these controls only to indirect/implied speech converted into direct dialogue, spoken lines that were not already quoted, and very close dialogue tags.',
     '- The later English translation level control applies even when the selected output language is Korean, because the Korean dialogue may later be translated into English by another extension.',
     '- When outputting Korean, keep the Korean dialogue natural. Do not make it sound stiff, childish, translated, or foreign just to steer the later English translation.',
     '- Do not add deliberate grammar mistakes, stereotypes, or exaggerated broken English for lower English levels.',
@@ -1344,6 +1413,20 @@ function buildSystemPrompt() {
 }
 
 /**
+ * 다듬기에 사용할 system prompt를 조립합니다.
+ *
+ * 대필과 달리 톤/길이/맥락 프리셋은 강하게 적용하지 않습니다.
+ * 다듬기는 "원문 유지"가 핵심이므로, 대사 조절값만 약하게 참고합니다.
+ */
+function buildPolishSystemPrompt() {
+  return [
+    DEFAULT_POLISH_SYSTEM_PROMPT,
+    '',
+    buildStyleControlsPrompt('TEXT_TO_POLISH')
+  ].join('\n');
+}
+
+/**
  * 모델에 보낼 실제 프롬프트를 만듭니다.
  *
  * originalText는 유저가 입력창에 쓴 원문입니다.
@@ -1392,6 +1475,25 @@ function buildRewritePrompt(originalText) {
     'Output requirement:',
     'Write only the rewritten third-person prose where {{user}} / {{User}} / <USER> is the actor.',
     'The output should preserve the draft while sounding consistent with {{user}} / {{User}} persona style.'
+  ].join('\n');
+}
+
+/**
+ * 다듬기 모델 호출에 보낼 실제 프롬프트를 만듭니다.
+ *
+ * 사용자가 입력한 본문만 <TEXT_TO_POLISH> 안에 넣어,
+ * 설명이나 이어쓰기가 아니라 후처리 편집으로 제한합니다.
+ */
+function buildPolishPrompt(originalText) {
+  return [
+    'Polish the following user-written message according to the system rules.',
+    '',
+    '<TEXT_TO_POLISH>',
+    originalText,
+    '</TEXT_TO_POLISH>',
+    '',
+    'Output requirement:',
+    'Return only the polished message body. Do not add labels, comments, explanations, or Markdown.'
   ].join('\n');
 }
 
@@ -1620,7 +1722,11 @@ function renderHistoryPanel() {
 
     const time = document.createElement('div');
     time.className = 'ghostwriter-history-time';
-    time.textContent = formatHistoryTime(item.createdAt);
+    time.title = getHistoryItemTypeLabel(item.type);
+    time.innerHTML = `
+      <i class="fa-solid ${getHistoryItemTypeIcon(item.type)}" aria-hidden="true"></i>
+      <span>${formatHistoryTime(item.createdAt)}</span>
+    `;
 
     // [히스토리 요약]
     // 예전에는 이 영역을 누르면 바로 입력창에 적용했지만,
@@ -1653,6 +1759,14 @@ function renderHistoryPanel() {
     apply.title = '이 대필 결과를 입력창에 적용합니다.';
     apply.setAttribute('aria-label', '입력창에 적용');
 
+    const polish = document.createElement('button');
+    polish.type = 'button';
+    polish.className = 'ghostwriter-history-polish';
+    polish.dataset.ghostwriterHistoryPolish = item.id;
+    polish.innerHTML = '<i class="fa-solid fa-pen-nib" aria-hidden="true"></i>';
+    polish.title = '이 결과를 한 번 더 다듬습니다.';
+    polish.setAttribute('aria-label', '이 결과 다듬기');
+
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'ghostwriter-history-toggle';
@@ -1663,7 +1777,7 @@ function renderHistoryPanel() {
 
     const itemActions = document.createElement('div');
     itemActions.className = 'ghostwriter-history-item-actions';
-    itemActions.append(translate, apply, toggle);
+    itemActions.append(translate, polish, apply, toggle);
 
     const detail = document.createElement('div');
     detail.className = 'ghostwriter-history-detail';
@@ -1776,6 +1890,23 @@ async function rewriteHistoryOriginal(itemId) {
 }
 
 /**
+ * 히스토리에 저장된 결과 문장을 다시 다듬습니다.
+ *
+ * 대필 원문이 아니라 화면에 보이는 결과(item.rewritten)를 기준으로 다듬습니다.
+ */
+async function polishHistoryResult(itemId) {
+  const item = findHistoryItem(itemId);
+
+  if (!item) {
+    toastr?.warning?.('다듬을 히스토리 기록을 찾지 못했어요.');
+    renderHistoryPanel();
+    return;
+  }
+
+  await polishOriginalAndApply(item.rewritten, '선택한 결과를 다듬었어요.');
+}
+
+/**
  * 가장 최근 히스토리에 저장된 원문을 현재 설정으로 다시 대필합니다.
  *
  * 사용자가 말한 "직전 인풋"은 가장 최근 대필을 만들 때 입력창에 있던 원문입니다.
@@ -1848,6 +1979,7 @@ async function handleHistoryPanelClick(event) {
   const restoreLatestButton = event.target.closest('[data-ghostwriter-restore-latest-original]');
   const toggleButton = event.target.closest('[data-ghostwriter-history-toggle]');
   const applyButton = event.target.closest('[data-ghostwriter-history-apply]');
+  const polishButton = event.target.closest('[data-ghostwriter-history-polish]');
   const translateButton = event.target.closest('[data-ghostwriter-history-translate]');
   const historyItemRow = event.target.closest('[data-ghostwriter-history-id]');
 
@@ -1917,6 +2049,32 @@ async function handleHistoryPanelClick(event) {
 
     return;
   }
+
+  if (polishButton) {
+    if (isGenerating) {
+      return;
+    }
+
+    try {
+      isGenerating = true;
+      setButtonWorking(polishButton, true);
+      await polishHistoryResult(polishButton.dataset.ghostwriterHistoryPolish);
+    } catch (error) {
+      console.error(`[${EXTENSION_NAME}] history polish failed`, error);
+
+      if (error?.name === 'GhostwriterProfileError') {
+        toastr?.error?.(error.message);
+      } else {
+        toastr?.error?.('히스토리 결과 다듬기 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
+      }
+    } finally {
+      isGenerating = false;
+      setButtonWorking(polishButton, false);
+    }
+
+    return;
+  }
+
   if (historyItemRow && !event.target.closest('button') && !event.target.closest('.ghostwriter-history-detail')) {
     toggleHistoryItem(historyItemRow);
     return;
@@ -2022,7 +2180,35 @@ async function rewriteOriginalAndApply(originalText, successMessage = '대필 �
 
   const cleanedText = rewrittenText.trim();
   setInputTextareaValue(cleanedText);
-  addHistoryItem(originalText, cleanedText);
+  addHistoryItem(originalText, cleanedText, 'rewrite');
+  toastr?.success?.(successMessage);
+  return true;
+}
+
+/**
+ * 원문 하나를 다듬고, 결과를 바로 입력창에 적용한 뒤 히스토리에 저장합니다.
+ */
+async function polishOriginalAndApply(originalText, successMessage = '다듬은 결과로 입력창을 덮어썼어요.') {
+  const context = getSillyTavernContext();
+
+  if (!context?.generateRaw) {
+    toastr?.error?.('SillyTavern 생성 API를 찾지 못했어요.');
+    return false;
+  }
+
+  const polishedText = await runWithGhostwriterProfile(() => context.generateRaw({
+    systemPrompt: buildPolishSystemPrompt(),
+    prompt: buildPolishPrompt(originalText)
+  }));
+
+  if (typeof polishedText !== 'string' || !polishedText.trim()) {
+    toastr?.warning?.('다듬기 결과가 비어 있어요.');
+    return false;
+  }
+
+  const cleanedText = polishedText.trim();
+  setInputTextareaValue(cleanedText);
+  addHistoryItem(originalText, cleanedText, 'polish');
   toastr?.success?.(successMessage);
   return true;
 }
@@ -2067,6 +2253,42 @@ async function rewriteCurrentInput() {
 }
 
 /**
+ * 입력창의 원문을 읽고, 시점/의미를 유지한 채 문장만 다듬습니다.
+ */
+async function polishCurrentInput() {
+  if (isGenerating) {
+    return;
+  }
+
+  const textarea = getInputTextarea();
+  const originalText = textarea?.value?.trim();
+
+  if (!originalText) {
+    toastr?.warning?.('다듬을 입력문이 비어 있어요.');
+    return;
+  }
+
+  const button = document.querySelector(`#${EXTENSION_NAME}-polish-button`);
+
+  try {
+    isGenerating = true;
+    setButtonWorking(button, true);
+    await polishOriginalAndApply(originalText);
+  } catch (error) {
+    console.error(`[${EXTENSION_NAME}] polish failed`, error);
+
+    if (error?.name === 'GhostwriterProfileError') {
+      toastr?.error?.(error.message);
+    } else {
+      toastr?.error?.('다듬기 중 오류가 발생했어요. 콘솔을 확인해 주세요.');
+    }
+  } finally {
+    isGenerating = false;
+    setButtonWorking(button, false);
+  }
+}
+
+/**
  * 입력창 주변에 ghostwriter 버튼을 추가합니다.
  *
  * 목표 위치는 "전송 버튼 옆"입니다.
@@ -2074,7 +2296,7 @@ async function rewriteCurrentInput() {
  * 자주 쓰이는 selector들을 순서대로 찾아보고 가장 먼저 발견되는 버튼 옆에 붙입니다.
  */
 function insertGhostwriterButton() {
-  if (document.querySelector(`#${EXTENSION_NAME}-button`)) {
+  if (document.querySelector(`#${EXTENSION_NAME}-button`) && document.querySelector(`#${EXTENSION_NAME}-polish-button`)) {
     return;
   }
 
@@ -2087,14 +2309,30 @@ function insertGhostwriterButton() {
     return;
   }
 
-  const button = document.createElement('button');
-  button.id = `${EXTENSION_NAME}-button`;
-  button.type = 'button';
-  button.className = 'menu_button ghostwriter-button';
-  button.title = '입력창 내용을 유저 시점의 3인칭 문장으로 대필합니다.';
-  button.setAttribute('aria-label', '유저 시점 3인칭 대필');
-  button.addEventListener('click', rewriteCurrentInput);
-  setButtonIcon(button);
+  let button = document.querySelector(`#${EXTENSION_NAME}-button`);
+  let polishButton = document.querySelector(`#${EXTENSION_NAME}-polish-button`);
+
+  if (!button) {
+    button = document.createElement('button');
+    button.id = `${EXTENSION_NAME}-button`;
+    button.type = 'button';
+    button.className = 'menu_button ghostwriter-button';
+    button.title = '입력창 내용을 유저 시점의 3인칭 문장으로 대필합니다.';
+    button.setAttribute('aria-label', '유저 시점 3인칭 대필');
+    button.addEventListener('click', rewriteCurrentInput);
+    setButtonIcon(button);
+  }
+
+  if (!polishButton) {
+    polishButton = document.createElement('button');
+    polishButton.id = `${EXTENSION_NAME}-polish-button`;
+    polishButton.type = 'button';
+    polishButton.className = 'menu_button ghostwriter-button ghostwriter-polish-button';
+    polishButton.title = '입력창 내용을 번역 없이 같은 언어로 다듬습니다.';
+    polishButton.setAttribute('aria-label', '입력문 다듬기');
+    polishButton.addEventListener('click', polishCurrentInput);
+    setPolishButtonIcon(polishButton);
+  }
 
   if (sendButton) {
     /*
@@ -2104,8 +2342,10 @@ function insertGhostwriterButton() {
      * 실제 화면에서는 전송 버튼 바로 왼쪽에 오도록 sendButton 직전에 삽입합니다.
      */
     container.insertBefore(button, sendButton);
+    container.insertBefore(polishButton, sendButton);
   } else {
     container.appendChild(button);
+    container.appendChild(polishButton);
   }
 
   syncGhostwriterButtonWithSendButton();
